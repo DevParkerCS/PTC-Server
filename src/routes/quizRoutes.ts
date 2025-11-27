@@ -58,9 +58,9 @@ router.post("/from-notes", upload.array("images"), async (req, res) => {
       ocrPieces.push(ocrText);
     }
     const ocrTextCombined = ocrPieces.join("\n\n");
-
+    console.log(ocrTextCombined.length);
     // 2) Combine typed notes + OCR within 10k char budget
-    const MAX_CHARS = 10000;
+    const MAX_CHARS = 20000;
     const typed = notesText.slice(0, MAX_CHARS);
     const remaining = MAX_CHARS - typed.length;
     const ocrTrimmed = remaining > 0 ? ocrTextCombined.slice(0, remaining) : "";
