@@ -11,10 +11,12 @@ export const FAKE_USER_ID = "00000000-0000-0000-0000-000000000000";
 
 app.use(
   cors({
-    origin: "http://localhost:3000", // your React dev server
+    origin: process.env.FRONTEND_URL || "http://localhost:3000", // your React dev server
     // credentials: true,
   })
 );
+
+console.log(process.env.FRONTEND_URL);
 
 app.use(express.json());
 
