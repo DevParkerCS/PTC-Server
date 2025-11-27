@@ -28,17 +28,16 @@ export const generateQuizFromNotes = async ({
 }: GQMParams) => {
   const response = await openai.chat.completions.create({
     model: "gpt-4.1-mini",
+    temperature: 0, // important: make it deterministic & less “creative”
     messages: [
       { role: "system", content: quizPrompt },
       {
         role: "system",
         content: `
 Additional constraints:
-- Try your hardest to generate ${numQuestions} unique questions based on the notes.
-- If the notes do not support ${numQuestions} good questions, generate as many high-quality questions as possible, and do NOT invent any information that is not clearly in the notes.
-- The student is ${
-          gradeLevel || "college"
-        }, so match the difficulty to that level.
+- Try your hardest to generate ${numQuestions} unique questions.
+- If the notes do not support ${numQuestions} good questions, generate fewer.
+- Match difficulty to a ${gradeLevel || "college"} student.
 `.trim(),
       },
       {
