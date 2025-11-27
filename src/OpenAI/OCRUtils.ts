@@ -1,29 +1,55 @@
-import { openai } from "./openaiClient";
+// src/OpenAI/OCRUtils.ts
+import { performance } from "node:perf_hooks";
+import sharp from "sharp";
+import vision from "@google-cloud/vision";
 
-export async function extractTextFromImageBuffer(file: Express.Multer.File) {
-  // file.buffer: Buffer (from multer memoryStorage)
-  // file.mimetype: 'image/jpeg', 'image/png', etc.
-  const base64 = file.buffer.toString("base64");
-  const dataUrl = `data:${file.mimetype};base64,${base64}`;
+const MAX_OCR_CHARS = 20000;
+const MAX_OCR_LONG_EDGE = 1600;
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-4.1-mini", // or another vision-capable model
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are an OCR engine. Read the image and return only the extracted text up to 5000 characters. Do not add explanations, formatting, or extra words.",
-      },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "Extract all text from this image." },
-          { type: "image_url", image_url: { url: dataUrl } },
-        ],
-      },
-    ],
-  });
+const credentials = process.env.GCP_VISION_API
+  ? JSON.parse(process.env.GCP_VISION_API)
+  : undefined;
 
-  const text = response.choices?.[0]?.message?.content || "";
-  return text;
+const visionClient = new vision.ImageAnnotatorClient(
+  credentials ? { credentials } : {}
+);
+
+export async function extractTextFromImageBuffer(
+  file: Express.Multer.File
+): Promise<string> {
+  const start = performance.now();
+
+  try {
+    const resizedBuffer = await sharp(file.buffer)
+      .resize({
+        width: MAX_OCR_LONG_EDGE,
+        height: MAX_OCR_LONG_EDGE,
+        fit: "inside",
+      })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+
+    const [result] = await visionClient.textDetection({
+      image: { content: resizedBuffer },
+    });
+
+    const text = result.fullTextAnnotation?.text ?? "";
+
+    const end = performance.now();
+    console.log(
+      `extractTextFromImageBuffer (Vision) took ${(end - start).toFixed(0)} ms`
+    );
+
+    if (!text) return "";
+    return text.slice(0, MAX_OCR_CHARS);
+  } catch (err) {
+    const end = performance.now();
+    console.error(
+      `extractTextFromImageBuffer (Vision) failed after ${(end - start).toFixed(
+        0
+      )} ms`,
+      err
+    );
+    throw new Error("Error Parsing Image");
+  }
 }
