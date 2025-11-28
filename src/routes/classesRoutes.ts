@@ -1,14 +1,18 @@
 import express from "express";
 import { supabase } from "../supabaseClient";
-import { FAKE_USER_ID } from "../server";
+import { requireAuth } from "../middleware/AuthMiddleware";
 
 const router = express.Router();
 
-router.get("/", async (req, res) => {
+router.get("/", requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+  console.log(userId);
+
   const { data, error } = await supabase
     .from("classes")
     .select("*")
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    .eq("user_id", userId);
 
   if (error) {
     console.log(error);
@@ -18,7 +22,8 @@ router.get("/", async (req, res) => {
   res.json(data);
 });
 
-router.post("/", async (req, res) => {
+router.post("/", requireAuth, async (req, res) => {
+  const userId = (req as any).user?.id;
   const { name } = req.body;
 
   if (!name || typeof name !== "string" || name.trim() === "") {
@@ -30,7 +35,7 @@ router.post("/", async (req, res) => {
     .insert([
       {
         name,
-        user_id: FAKE_USER_ID,
+        user_id: userId,
       },
     ])
     .select()
