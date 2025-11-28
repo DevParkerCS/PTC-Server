@@ -7,7 +7,6 @@ import quizRoutes from "./routes/quizRoutes";
 
 dotenv.config();
 const app = express();
-export const FAKE_USER_ID = "00000000-0000-0000-0000-000000000000";
 
 app.use(
   cors({

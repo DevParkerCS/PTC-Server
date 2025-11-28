@@ -8,14 +8,14 @@ import {
   shuffleOptions,
 } from "../OpenAI/quizUtils";
 import multer from "multer";
-import { FAKE_USER_ID } from "../server";
 import { v4 as uuidv4 } from "uuid";
 import { json } from "stream/consumers";
+import { requireAuth } from "../middleware/AuthMiddleware";
 
 const upload = multer({ storage: multer.memoryStorage() });
 const router = express.Router();
 
-router.get("/questions/:id", async (req, res) => {
+router.get("/questions/:id", requireAuth, async (req, res) => {
   const quizId = req.params.id;
 
   if (!quizId) {
@@ -36,96 +36,102 @@ router.get("/questions/:id", async (req, res) => {
   }
 });
 
-router.post("/from-notes", upload.array("images"), async (req, res) => {
-  try {
-    const {
-      notesText = "",
-      gradeLevel = "",
-      numQuestions = "10",
-      classId = "",
-    } = req.body;
+router.post(
+  "/from-notes",
+  requireAuth,
+  upload.array("images"),
+  async (req, res) => {
+    try {
+      const {
+        notesText = "",
+        gradeLevel = "",
+        numQuestions = "10",
+        classId = "",
+      } = req.body;
 
-    if (classId === "") {
-      res.status(400).json({ error: "Missing Class ID" });
-    }
-
-    const files = (req.files as Express.Multer.File[]) ?? [];
-
-    // 1) OCR all images
-    const ocrPieces = [];
-    for (const file of files) {
-      const ocrText = await extractTextFromImageBuffer(file);
-      ocrPieces.push(ocrText);
-    }
-    const ocrTextCombined = ocrPieces.join("\n\n");
-    console.log(ocrTextCombined.length);
-    // 2) Combine typed notes + OCR within 10k char budget
-    const MAX_CHARS = 20000;
-    const typed = notesText.slice(0, MAX_CHARS);
-    const remaining = MAX_CHARS - typed.length;
-    const ocrTrimmed = remaining > 0 ? ocrTextCombined.slice(0, remaining) : "";
-
-    const combinedNotes = [typed, ocrTrimmed].filter(Boolean).join("\n\n");
-
-    // 3) Generate quiz from combined notes
-    const quizObj = await generateQuizFromNotes({
-      notes: combinedNotes,
-      gradeLevel,
-      numQuestions: Number(numQuestions),
-    });
-
-    const { data: quizData, error: quizError } = await supabase
-      .from("quizzes")
-      .insert([
-        {
-          title: quizObj.quiz.title,
-          class_id: classId,
-          num_questions: quizObj.questions.length,
-        },
-      ])
-      .select()
-      .single();
-
-    if (quizError) {
-      res.status(500).json(quizError);
-    }
-
-    const questionRows: DbQuestionRow[] = quizObj.questions.map(
-      (q: AiQuestion) => {
-        const { options, correctIndex } = shuffleOptions(
-          q.correct_answer,
-          q.incorrect_answers
-        );
-
-        const optionObjects = options.map((text) => ({
-          id: uuidv4(),
-          text,
-        }));
-
-        return {
-          quiz_id: quizData.id,
-          question: q.question,
-          options: optionObjects,
-          correct_index: correctIndex,
-          explanation: q.explanation,
-        };
+      if (classId === "") {
+        res.status(400).json({ error: "Missing Class ID" });
       }
-    );
 
-    const { data: questionData, error } = await supabase
-      .from("quiz_questions")
-      .insert(questionRows)
-      .select();
+      const files = (req.files as Express.Multer.File[]) ?? [];
 
-    if (error) {
-      res.status(500).json(error);
+      // 1) OCR all images
+      const ocrPieces = [];
+      for (const file of files) {
+        const ocrText = await extractTextFromImageBuffer(file);
+        ocrPieces.push(ocrText);
+      }
+      const ocrTextCombined = ocrPieces.join("\n\n");
+      console.log(ocrTextCombined.length);
+      // 2) Combine typed notes + OCR within 10k char budget
+      const MAX_CHARS = 20000;
+      const typed = notesText.slice(0, MAX_CHARS);
+      const remaining = MAX_CHARS - typed.length;
+      const ocrTrimmed =
+        remaining > 0 ? ocrTextCombined.slice(0, remaining) : "";
+
+      const combinedNotes = [typed, ocrTrimmed].filter(Boolean).join("\n\n");
+
+      // 3) Generate quiz from combined notes
+      const quizObj = await generateQuizFromNotes({
+        notes: combinedNotes,
+        gradeLevel,
+        numQuestions: Number(numQuestions),
+      });
+
+      const { data: quizData, error: quizError } = await supabase
+        .from("quizzes")
+        .insert([
+          {
+            title: quizObj.quiz.title,
+            class_id: classId,
+            num_questions: quizObj.questions.length,
+          },
+        ])
+        .select()
+        .single();
+
+      if (quizError) {
+        res.status(500).json(quizError);
+      }
+
+      const questionRows: DbQuestionRow[] = quizObj.questions.map(
+        (q: AiQuestion) => {
+          const { options, correctIndex } = shuffleOptions(
+            q.correct_answer,
+            q.incorrect_answers
+          );
+
+          const optionObjects = options.map((text) => ({
+            id: uuidv4(),
+            text,
+          }));
+
+          return {
+            quiz_id: quizData.id,
+            question: q.question,
+            options: optionObjects,
+            correct_index: correctIndex,
+            explanation: q.explanation,
+          };
+        }
+      );
+
+      const { data: questionData, error } = await supabase
+        .from("quiz_questions")
+        .insert(questionRows)
+        .select();
+
+      if (error) {
+        res.status(500).json(error);
+      }
+
+      res.json({ quiz: quizData, questions: questionData });
+    } catch (err) {
+      console.error("Error in /from-notes:", err);
+      res.status(500).json({ error: "Failed to generate quiz" });
     }
-
-    res.json({ quiz: quizData, questions: questionData });
-  } catch (err) {
-    console.error("Error in /from-notes:", err);
-    res.status(500).json({ error: "Failed to generate quiz" });
   }
-});
+);
 
 export default router;
