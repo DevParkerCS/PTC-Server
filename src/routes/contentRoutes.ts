@@ -1,9 +1,10 @@
 import express from "express";
 import { supabase } from "../supabaseClient";
+import { requireAuth } from "../middleware/AuthMiddleware";
 
 const router = express.Router();
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", requireAuth, async (req, res) => {
   const classId = req.params.id;
 
   if (!classId) {
