@@ -47,7 +47,7 @@ The JSON must follow this exact structure:
 
 Constraints:
 - No top-level keys besides "quiz" and "questions".
-- "questions" is an array with one object per question.
+- "questions" is an array with one object per question.  Don't always make the right answer the longest question.  Try to make at least one other plausabile incorrect question around the same length as the correct.
 - Each "incorrect_answers" has exactly 3 items.
 - "supporting_text" MUST be an exact substring of the notes.
 `;
