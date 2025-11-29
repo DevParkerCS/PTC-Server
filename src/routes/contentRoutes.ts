@@ -12,19 +12,13 @@ router.get("/:id", requireAuth, async (req, res) => {
   }
 
   try {
-    const [quizzesRes, flashcardsRes] = await Promise.all([
-      supabase
-        .from("quizzes")
-        .select("id, title, num_questions, last_taken_at, created_at")
-        .eq("class_id", classId),
-      supabase
-        .from("flashcards")
-        .select("id, title, num_cards, last_used_at, created_at")
-        .eq("class_id", classId),
-    ]);
+    const { data, error } = await supabase
+      .from("quizzes")
+      .select("id, title, num_questions, last_taken_at, created_at")
+      .eq("class_id", classId);
 
     const quizzes =
-      quizzesRes.data?.map((row) => {
+      data?.map((row) => {
         const lastUsed = row.last_taken_at ?? row.created_at; // fallback if never taken
 
         return {
@@ -36,20 +30,7 @@ router.get("/:id", requireAuth, async (req, res) => {
         };
       }) ?? [];
 
-    const flashcards =
-      flashcardsRes.data?.map((row) => {
-        const lastUsed = row.last_used_at ?? row.created_at;
-
-        return {
-          id: row.id,
-          type: "card",
-          title: row.title,
-          num_items: `${row.num_cards} Cards`,
-          last_used_at: lastUsed,
-        };
-      }) ?? [];
-
-    const content = [...quizzes, ...flashcards].sort(
+    const content = [...quizzes].sort(
       (a, b) =>
         new Date(b.last_used_at).getTime() - new Date(a.last_used_at).getTime()
     );
