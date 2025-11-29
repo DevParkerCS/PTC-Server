@@ -37,33 +37,24 @@ router.get("/questions/:id", requireAuth, async (req, res) => {
 });
 
 router.post(
-  "/from-notes",
+  "/from-notes/ocr",
   requireAuth,
   upload.array("images"),
   async (req, res) => {
     try {
-      const {
-        notesText = "",
-        gradeLevel = "",
-        numQuestions = "10",
-        classId = "",
-      } = req.body;
-
-      if (classId === "") {
-        res.status(400).json({ error: "Missing Class ID" });
-      }
+      const { notesText = "" } = req.body;
 
       const files = (req.files as Express.Multer.File[]) ?? [];
 
       // 1) OCR all images
-      const ocrPieces = [];
+      const ocrPieces: string[] = [];
       for (const file of files) {
         const ocrText = await extractTextFromImageBuffer(file);
-        ocrPieces.push(ocrText);
+        if (ocrText) ocrPieces.push(ocrText);
       }
       const ocrTextCombined = ocrPieces.join("\n\n");
-      console.log(ocrTextCombined.length);
-      // 2) Combine typed notes + OCR within 10k char budget
+
+      // 2) Combine typed notes + OCR within 20k char budget
       const MAX_CHARS = 20000;
       const typed = notesText.slice(0, MAX_CHARS);
       const remaining = MAX_CHARS - typed.length;
@@ -72,66 +63,103 @@ router.post(
 
       const combinedNotes = [typed, ocrTrimmed].filter(Boolean).join("\n\n");
 
-      // 3) Generate quiz from combined notes
-      const quizObj = await generateQuizFromNotes({
-        notes: combinedNotes,
-        gradeLevel,
-        numQuestions: Number(numQuestions),
+      // Return all pieces so frontend can decide what to use
+      res.json({
+        combinedNotes,
+        typedNotes: typed,
+        ocrText: ocrTrimmed,
       });
-
-      const { data: quizData, error: quizError } = await supabase
-        .from("quizzes")
-        .insert([
-          {
-            title: quizObj.quiz.title,
-            class_id: classId,
-            num_questions: quizObj.questions.length,
-          },
-        ])
-        .select()
-        .single();
-
-      if (quizError) {
-        res.status(500).json(quizError);
-      }
-
-      const questionRows: DbQuestionRow[] = quizObj.questions.map(
-        (q: AiQuestion) => {
-          const { options, correctIndex } = shuffleOptions(
-            q.correct_answer,
-            q.incorrect_answers
-          );
-
-          const optionObjects = options.map((text) => ({
-            id: uuidv4(),
-            text,
-          }));
-
-          return {
-            quiz_id: quizData.id,
-            question: q.question,
-            options: optionObjects,
-            correct_index: correctIndex,
-            explanation: q.explanation,
-          };
-        }
-      );
-
-      const { data: questionData, error } = await supabase
-        .from("quiz_questions")
-        .insert(questionRows)
-        .select();
-
-      if (error) {
-        res.status(500).json(error);
-      }
-
-      res.json({ quiz: quizData, questions: questionData });
     } catch (err) {
-      console.error("Error in /from-notes:", err);
-      res.status(500).json({ error: "Failed to generate quiz" });
+      console.error("Error in /from-notes/ocr:", err);
+      res.status(500).json({ error: "Failed to extract text from notes" });
     }
   }
 );
+
+router.post("/from-notes", requireAuth, async (req, res) => {
+  try {
+    const {
+      notesText = "",
+      gradeLevel = "",
+      numQuestions = "10",
+      classId = "",
+      genExample = false,
+    } = req.body;
+
+    if (!classId) {
+      return res.status(400).json({ error: "Missing Class ID" });
+    }
+
+    // 1) Generate quiz from provided notes text
+    const quizObj = await generateQuizFromNotes({
+      notes: notesText,
+      gradeLevel,
+      numQuestions: Number(numQuestions),
+      genExample,
+    });
+
+    // 2) Insert quiz row
+    const { data: quizData, error: quizError } = await supabase
+      .from("quizzes")
+      .insert([
+        {
+          title: quizObj.quiz.title,
+          class_id: classId,
+          num_questions: quizObj.questions.length,
+        },
+      ])
+      .select()
+      .single();
+
+    if (quizError || !quizData) {
+      console.error("Quiz insert error:", quizError);
+      return res
+        .status(500)
+        .json({ error: "Failed to save quiz", details: quizError });
+    }
+
+    // 3) Build question rows
+    const questionRows: DbQuestionRow[] = quizObj.questions.map(
+      (q: AiQuestion) => {
+        const { options, correctIndex } = shuffleOptions(
+          q.correct_answer,
+          q.incorrect_answers
+        );
+
+        const optionObjects = options.map((text) => ({
+          id: uuidv4(),
+          text,
+        }));
+
+        return {
+          quiz_id: quizData.id,
+          question: q.question,
+          options: optionObjects,
+          correct_index: correctIndex,
+          explanation: q.explanation,
+        };
+      }
+    );
+
+    // 4) Insert questions
+    const { data: questionData, error: questionError } = await supabase
+      .from("quiz_questions")
+      .insert(questionRows)
+      .select();
+
+    if (questionError) {
+      console.error("Question insert error:", questionError);
+      return res.status(500).json({
+        error: "Failed to save quiz questions",
+        details: questionError,
+      });
+    }
+
+    res.json({ quiz: quizData, questions: questionData });
+  } catch (err) {
+    console.error("Error in POST /from-notes:", err);
+    res.status(500).json({ error: "Failed to generate quiz" });
+  }
+});
 
 export default router;
