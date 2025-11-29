@@ -11,6 +11,7 @@ import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import { json } from "stream/consumers";
 import { requireAuth } from "../middleware/AuthMiddleware";
+import { error } from "console";
 
 const upload = multer({ storage: multer.memoryStorage() });
 const router = express.Router();
@@ -33,6 +34,30 @@ router.get("/questions/:id", requireAuth, async (req, res) => {
     res.json({ quizInfo, questions });
   } catch (e) {
     res.status(500).json({ error: "Error Getting Quiz Content" });
+  }
+});
+
+router.delete("/:quizId", requireAuth, async (req, res) => {
+  const { quizId } = req.params;
+
+  if (!quizId) {
+    res.status(400).json({ error: "QuizId is missing" });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("quizzes")
+      .delete()
+      .eq("id", quizId)
+      .single();
+
+    if (error) {
+      res.status(500).json({ error: "Error deleting quiz" });
+    }
+
+    res.json({ data });
+  } catch (e) {
+    res.status(500).json({ error: "Error deleting quiz" });
   }
 });
 
