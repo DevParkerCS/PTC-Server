@@ -38,7 +38,7 @@ export const generateQuizFromNotes = async ({
         role: "system",
         content: `
 Additional constraints:
-- Try your hardest to generate exactly ${numQuestions} unique questions.
+- Try your hardest to generate exactly ${numQuestions} unique questions.  Make sure to grab questions from different sections in the notes and not just generate the first ${numQuestions} questions.
 - If the notes do not support ${numQuestions} good questions, generate fewer.
 - Match difficulty to a ${gradeLevel || "college"} student.
 ${
