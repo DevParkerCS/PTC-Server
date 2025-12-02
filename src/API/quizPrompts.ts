@@ -22,16 +22,26 @@ Question style:
      - All details in the scenario must be consistent with the notes. You may plug in specific values (e.g., numbers, labels, conditions) that fit the rules given.
 
 Question rules:
+- NEVER mention the existence of "the notes" in the question text. Do NOT say "in the notes", "according to the notes", etc.
 - Each question must have exactly one correct answer and three plausible incorrect answers.
-- Ensure that the incorrect answers are indeed incorrect.  They should relate to the question and not be some random incorrect answer.
-- Every part of the question, correct answer, incorrect answers, and explanation MUST be directly supported by, or logically derived from, specific text in the notes.
+- The incorrect answers must be clearly wrong but still related to the concept being tested. Do NOT use random or irrelevant wrong answers.
+- Every correct answer and explanation MUST be directly supported by, or logically derived from, specific text in the notes.
   - "Logically derived" means you are simply applying or combining rules given in the notes, not inventing new rules.
-- All four answer choices MUST be similar in length and level of detail:
-  - Avoid making the correct answer obviously longer or more detailed than the others.
-  - If the correct answer must be long, make at least one incorrect answer equally long and detailed, with similar structure.
-  - Avoid single-word or very short incorrect answers when the correct answer is a full phrase or sentence.
 
-If the notes do not support the requested number of questions, create fewer. Never invent new information.
+Answer length rules:
+- For EACH question, all four answer choices should be SHORT phrases or single sentences of similar length.
+- TARGET length: 8–16 words per answer choice.
+- DO NOT make the correct answer obviously longer or more detailed than the incorrect answers.
+- None of the answers should be more than about 1.5x the length (in words) of the shortest answer.
+- If the correct answer must include multiple conditions, make at least one incorrect answer include a similar number of conditions, but in an incorrect way.
+- Avoid single-word or very short incorrect answers when the correct answer is a full phrase or sentence.
+
+Self-check step (very important):
+- After you write the four answer choices for a question, compare their lengths.
+- If the correct answer is clearly the longest or clearly the shortest option, REWRITE the answers so that:
+  - All four answers are within a similar word range, and
+  - The correct answer does NOT stand out by length.
+- Only after this self-check and rewrite should you include the question in the final JSON.
 
 Output format:
 You must respond with VALID JSON ONLY, with no extra text, comments, or Markdown.
@@ -50,7 +60,7 @@ The JSON must follow this exact structure:
         "string",
         "string"
       ],
-      "explanation": "string (brief explanation supported by the notes)"
+      "explanation": "string (brief explanation in your own words)"
     }
   ]
 }
@@ -59,6 +69,6 @@ Constraints:
 - No top-level keys besides "quiz" and "questions".
 - "questions" is an array with one object per question.
 - Each "incorrect_answers" array has exactly 3 items.
-- You MUST actively avoid patterns where the correct_answer is the only long or highly detailed option. If you notice that one option is much longer than the others, rewrite the answers to balance their lengths before returning the JSON.
+- You MUST avoid where the correct_answer is the only long or highly detailed option. If you notice that one option is much longer than the others, rewrite the answers to balance their lengths before returning the JSON.
 - Avoid beginning every question with the same phrasing (for example, do NOT repeatedly start with "According to the notes"). Vary the wording naturally while staying faithful to the notes.
 `;
