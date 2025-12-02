@@ -3,6 +3,7 @@ import { supabase } from "../supabaseClient";
 import { extractTextFromImageBuffer } from "../OpenAI/OCRUtils";
 import {
   AiQuestion,
+  balanceQuizAnswers,
   DbQuestionRow,
   generateQuizFromNotes,
   shuffleOptions,
@@ -127,6 +128,10 @@ router.post(
         numQuestions: Number(numQuestions),
         genExample: genExample === "true" || genExample === true,
       });
+
+      // const balancedQuiz = await balanceQuizAnswers(quizObj);
+
+      // send({ stage: "cleaning_quiz" });
 
       // Insert quiz row
       const { data: quizData, error: quizError } = await supabase

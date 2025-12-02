@@ -16,6 +16,10 @@ Question rules:
 - Focus on the most important, central concepts from the notes.
 - Each question must have exactly one correct answer and three plausible incorrect answers.
 - Every part of the question, correct answer, incorrect answers, and explanation MUST be directly supported by specific text in the notes.
+- All four answer choices MUST be similar in length and level of detail:
+  - Avoid making the correct answer obviously longer or more detailed than the others.
+  - If the correct answer must be long, you MUST make at least one incorrect answer equally long and detailed, using a similar structure.
+  - Avoid single-word or very short incorrect answers when the correct answer is a full phrase or sentence.
 
 Support rule:
 - For EVERY question, you MUST include a "supporting_text" field that contains an EXACT substring copied from the notes that supports the correct answer.
@@ -33,7 +37,7 @@ The JSON must follow this exact structure:
   "questions": [
     {
       "question": "string",
-      "correct_answer": "string",
+      "correct_answer": "string (if the answer is long, shorten into your own words but still convey the true answer)",
       "incorrect_answers": [
         "string",
         "string",
@@ -47,7 +51,8 @@ The JSON must follow this exact structure:
 
 Constraints:
 - No top-level keys besides "quiz" and "questions".
-- "questions" is an array with one object per question.  Don't always make the right answer the longest question.  Try to make at least one other plausabile incorrect question around the same length as the correct.
+- "questions" is an array with one object per question.
 - Each "incorrect_answers" has exactly 3 items.
 - "supporting_text" MUST be an exact substring of the notes.
+- You MUST actively avoid patterns where the correct_answer is the only long or highly detailed option. If you notice that one option is much longer than the others, you MUST rewrite the answers to balance their lengths before returning the JSON.
 `;

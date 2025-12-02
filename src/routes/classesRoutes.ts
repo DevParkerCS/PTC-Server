@@ -6,7 +6,6 @@ const router = express.Router();
 
 router.get("/", requireAuth, async (req, res) => {
   const userId = (req as any).user.id;
-  console.log(userId);
 
   const { data, error } = await supabase
     .from("classes")
