@@ -20,7 +20,6 @@ export type AiQuestion = {
   correct_answer: string;
   incorrect_answers: string[];
   explanation: string;
-  supporting_text: string;
 };
 
 export const generateQuizFromNotes = async ({
@@ -39,12 +38,12 @@ export const generateQuizFromNotes = async ({
         role: "system",
         content: `
 Additional constraints:
-- Try your hardest to generate up to ${numQuestions} unique questions.
+- Try your hardest to generate exactly ${numQuestions} unique questions.
 - If the notes do not support ${numQuestions} good questions, generate fewer.
 - Match difficulty to a ${gradeLevel || "college"} student.
 ${
   genExample
-    ? "For this quiz, some questions should be a concrete practice problems that directly uses the concepts in the student's notes. Instead, ask the student to solve, simplify, or interpret something. For each question: (1) put the practice problem itself in the `question` field, (2) put only the final numeric or algebraic result in `correct_answer`, (3) fill `incorrect_answers` with three plausible wrong results, (4) use `explanation` to briefly describe how to solve the problem step by step, and (5) use `supporting_text` to include the part of the notes that justifies this type of problem. You must still return exactly the same JSON structure as usual, with only `quiz` and `questions` as the top-level keys."
+    ? "For this quiz, some questions should be a concrete practice problems that directly uses the concepts in the student's notes. Instead, ask the student to solve, simplify, or interpret something."
     : ""
 }
  ""
