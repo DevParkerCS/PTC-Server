@@ -20,6 +20,51 @@ export async function extractTextFromImageBuffer(
   const start = performance.now();
 
   try {
+    // ---- PDF PATH (Vision, first 5 pages) ----
+    if (file.mimetype === "application/pdf") {
+      // Synchronous small-batch PDF OCR using Vision
+      const request = {
+        requests: [
+          {
+            inputConfig: {
+              mimeType: "application/pdf",
+              content: file.buffer,
+            },
+            features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
+            // First 5 pages (service supports up to 5 pages per doc for this API)
+            pages: [1, 2, 3, 4, 5],
+          },
+        ],
+      };
+
+      const [batchResult] = await visionClient.batchAnnotateFiles(
+        request as any
+      );
+
+      // This shape matches the Vision docs sample:
+      // result.responses[0].responses is an array of per-page responses
+      const fileResponses = batchResult.responses?.[0]?.responses ?? [];
+
+      let fullText = "";
+      for (const resp of fileResponses) {
+        const pageText = resp.fullTextAnnotation?.text;
+        if (pageText) {
+          fullText += pageText + "\n";
+        }
+      }
+
+      const text = fullText.trim();
+      const end = performance.now();
+      console.log(
+        `extractTextFromImageBuffer (Vision PDF) got ${text.length} chars in ${(
+          end - start
+        ).toFixed(0)} ms`
+      );
+
+      if (!text) return "";
+      return text.slice(0, MAX_OCR_CHARS);
+    }
+
     const resizedBuffer = await sharp(file.buffer)
       .resize({
         width: MAX_OCR_LONG_EDGE,
@@ -37,7 +82,9 @@ export async function extractTextFromImageBuffer(
 
     const end = performance.now();
     console.log(
-      `extractTextFromImageBuffer (Vision) took ${(end - start).toFixed(0)} ms`
+      `extractTextFromImageBuffer (Vision image) took ${(end - start).toFixed(
+        0
+      )} ms`
     );
 
     if (!text) return "";
