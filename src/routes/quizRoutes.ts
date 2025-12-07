@@ -42,7 +42,7 @@ router.delete("/:quizId", requireAuth, async (req, res) => {
   const { quizId } = req.params;
 
   if (!quizId) {
-    res.status(400).json({ error: "QuizId is missing" });
+    return res.status(400).json({ error: "QuizId is missing" });
   }
 
   try {
@@ -80,6 +80,115 @@ router.patch("/:quizId/title", requireAuth, async (req, res) => {
     res.json({ data });
   } catch (e) {
     res.status(500).json({ error: "Error updating title" });
+  }
+});
+
+router.post("/:quizId/attempt", requireAuth, async (req, res) => {
+  const { quizId } = req.params;
+  const { numCorrect, seconds, incorrectIndexes } = req.body;
+  const userId = (req as any).user?.id;
+
+  // Basic validation - allow 0 but not undefined/null
+  if (!quizId) {
+    return res.status(400).json({ error: "Missing quizId" });
+  }
+  if (numCorrect === undefined || seconds === undefined) {
+    return res
+      .status(400)
+      .json({ error: "numCorrect and seconds are required" });
+  }
+  if (!Array.isArray(incorrectIndexes)) {
+    return res
+      .status(400)
+      .json({ error: "incorrectIndexes must be an array of numbers" });
+  }
+
+  try {
+    // 1. Fetch current quiz stats
+    const { data: quiz, error: quizFetchError } = await supabase
+      .from("quizzes")
+      .select(
+        `
+        id,
+        average_score,
+        highest_score,
+        attempts_count,
+        average_time_seconds
+      `
+      )
+      .eq("id", quizId)
+      .single();
+
+    if (quizFetchError || !quiz) {
+      console.error("Error fetching quiz stats:", quizFetchError);
+      return res.status(404).json({ error: "Quiz not found" });
+    }
+
+    const prevAttempts = quiz.attempts_count ?? 0;
+    const prevAvgScore = quiz.average_score ?? 0;
+    const prevAvgTime = quiz.average_time_seconds ?? 0;
+    const prevHighScore = quiz.highest_score ?? 0;
+
+    const newAttempts = prevAttempts + 1;
+
+    const newAverageScore = Math.round(
+      (prevAvgScore * prevAttempts + numCorrect) / newAttempts
+    );
+
+    const newAverageTime = Math.round(
+      (prevAvgTime * prevAttempts + seconds) / newAttempts
+    );
+
+    const newHighestScore = Math.max(prevHighScore, numCorrect);
+
+    const now = new Date().toISOString();
+
+    // 2. Update quiz stats + insert completed_quizzes row
+    const [updateQuizRes, insertCompletedRes] = await Promise.all([
+      supabase
+        .from("quizzes")
+        .update({
+          average_score: newAverageScore,
+          highest_score: newHighestScore,
+          attempts_count: newAttempts,
+          average_time_seconds: newAverageTime,
+          last_taken_at: now,
+        })
+        .eq("id", quizId)
+        .select()
+        .single(),
+      supabase.from("completed_quizzes").insert({
+        quiz_id: quizId,
+        num_correct: numCorrect,
+        incorrect_indexes: incorrectIndexes,
+        seconds,
+      }),
+    ]);
+
+    if (updateQuizRes.error) {
+      console.error("Error updating quiz stats:", updateQuizRes.error);
+      return res
+        .status(500)
+        .json({ error: "Failed to update quiz statistics" });
+    }
+
+    if (insertCompletedRes.error) {
+      console.error(
+        "Error inserting completed_quizzes row:",
+        insertCompletedRes.error
+      );
+      return res
+        .status(500)
+        .json({ error: "Failed to record completed quiz attempt" });
+    }
+
+    return res.status(200).json({
+      message: "Attempt recorded successfully",
+      quizStats: updateQuizRes.data,
+    });
+  } catch (e) {
+    console.error("Unexpected error adding attempt:", e);
+    return res.status(500).json({ error: "Error adding attempt" });
   }
 });
 
