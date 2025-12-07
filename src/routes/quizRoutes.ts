@@ -53,12 +53,33 @@ router.delete("/:quizId", requireAuth, async (req, res) => {
       .single();
 
     if (error) {
-      res.status(500).json({ error: "Error deleting quiz" });
+      return res.status(500).json({ error: "Error deleting quiz" });
     }
 
     res.json({ data });
   } catch (e) {
     res.status(500).json({ error: "Error deleting quiz" });
+  }
+});
+
+router.patch("/:quizId/title", requireAuth, async (req, res) => {
+  const { quizId } = req.params;
+  const updates = req.body;
+
+  try {
+    const { data, error } = await supabase
+      .from("quizzes")
+      .update(updates)
+      .eq("id", quizId);
+
+    if (error) {
+      console.log(error);
+      return res.status(500).json({ error: "Error updating quiz" });
+    }
+
+    res.json({ data });
+  } catch (e) {
+    res.status(500).json({ error: "Error updating title" });
   }
 });
 
