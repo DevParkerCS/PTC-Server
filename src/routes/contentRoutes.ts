@@ -15,27 +15,23 @@ router.get("/:id", requireAuth, async (req, res) => {
     const { data, error } = await supabase
       .from("quizzes")
       .select("id, title, num_questions, last_taken_at, created_at")
-      .eq("class_id", classId);
+      .eq("class_id", classId)
+      .order("created_at");
 
     const quizzes =
       data?.map((row) => {
-        const lastUsed = row.last_taken_at ?? row.created_at; // fallback if never taken
+        const lastUsed = row.last_taken_at ?? row.created_at;
 
         return {
           id: row.id,
           type: "quiz",
           title: row.title,
           num_items: row.num_questions,
-          last_used_at: lastUsed, // ISO string from Supabase
+          last_used_at: lastUsed,
         };
       }) ?? [];
 
-    const content = [...quizzes].sort(
-      (a, b) =>
-        new Date(b.last_used_at).getTime() - new Date(a.last_used_at).getTime()
-    );
-
-    return res.json(content);
+    return res.json(quizzes);
   } catch (e) {
     console.error(e);
     return res

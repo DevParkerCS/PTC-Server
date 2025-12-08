@@ -2,6 +2,7 @@
 import { performance } from "node:perf_hooks";
 import sharp from "sharp";
 import vision from "@google-cloud/vision";
+import fsPromises from "fs/promises";
 
 const MAX_OCR_CHARS = 20000;
 const MAX_OCR_LONG_EDGE = 1600;
@@ -14,24 +15,26 @@ const visionClient = new vision.ImageAnnotatorClient(
   credentials ? { credentials } : {}
 );
 
-export async function extractTextFromImageBuffer(
+export async function extractTextFromImageFile(
   file: Express.Multer.File
 ): Promise<string> {
   const start = performance.now();
+  const filePath = file.path;
+  const mime = file.mimetype;
 
   try {
     // ---- PDF PATH (Vision, first 5 pages) ----
-    if (file.mimetype === "application/pdf") {
-      // Synchronous small-batch PDF OCR using Vision
+    if (mime === "application/pdf") {
+      const pdfBytes = await fsPromises.readFile(filePath);
+
       const request = {
         requests: [
           {
             inputConfig: {
               mimeType: "application/pdf",
-              content: file.buffer,
+              content: pdfBytes,
             },
             features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
-            // First 5 pages (service supports up to 5 pages per doc for this API)
             pages: [1, 2, 3, 4, 5],
           },
         ],
@@ -41,8 +44,6 @@ export async function extractTextFromImageBuffer(
         request as any
       );
 
-      // This shape matches the Vision docs sample:
-      // result.responses[0].responses is an array of per-page responses
       const fileResponses = batchResult.responses?.[0]?.responses ?? [];
 
       let fullText = "";
@@ -56,7 +57,7 @@ export async function extractTextFromImageBuffer(
       const text = fullText.trim();
       const end = performance.now();
       console.log(
-        `extractTextFromImageBuffer (Vision PDF) got ${text.length} chars in ${(
+        `extractTextFromImageFile (Vision PDF) got ${text.length} chars in ${(
           end - start
         ).toFixed(0)} ms`
       );
@@ -65,7 +66,9 @@ export async function extractTextFromImageBuffer(
       return text.slice(0, MAX_OCR_CHARS);
     }
 
-    const resizedBuffer = await sharp(file.buffer)
+    // ---- IMAGE PATH ----
+    // sharp can take a file path directly
+    const resizedBuffer = await sharp(filePath)
       .resize({
         width: MAX_OCR_LONG_EDGE,
         height: MAX_OCR_LONG_EDGE,
@@ -82,7 +85,7 @@ export async function extractTextFromImageBuffer(
 
     const end = performance.now();
     console.log(
-      `extractTextFromImageBuffer (Vision image) took ${(end - start).toFixed(
+      `extractTextFromImageFile (Vision image) took ${(end - start).toFixed(
         0
       )} ms`
     );
@@ -92,7 +95,7 @@ export async function extractTextFromImageBuffer(
   } catch (err) {
     const end = performance.now();
     console.error(
-      `extractTextFromImageBuffer (Vision) failed after ${(end - start).toFixed(
+      `extractTextFromImageFile (Vision) failed after ${(end - start).toFixed(
         0
       )} ms`,
       err

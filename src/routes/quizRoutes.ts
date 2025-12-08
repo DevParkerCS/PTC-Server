@@ -1,6 +1,6 @@
 import express from "express";
 import { supabase } from "../supabaseClient";
-import { extractTextFromImageBuffer } from "../OpenAI/OCRUtils";
+import { extractTextFromImageFile } from "../OpenAI/OCRUtils";
 import {
   AiQuestion,
   balanceQuizAnswers,
@@ -13,8 +13,34 @@ import { v4 as uuidv4 } from "uuid";
 import { json } from "stream/consumers";
 import { requireAuth } from "../middleware/AuthMiddleware";
 import { error } from "console";
+import path from "path";
+import fs from "fs";
+import fsPromises from "fs/promises";
 
-const upload = multer({ storage: multer.memoryStorage() });
+const uploadDir = path.join(__dirname, "..", "..", "uploads");
+
+// Ensure the upload directory exists at startup
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      cb(null, uploadDir);
+    },
+    filename: (_req, file, cb) => {
+      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+      const ext = path.extname(file.originalname);
+      cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
+    },
+  }),
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 10,
+  },
+});
+
 const router = express.Router();
 
 router.get("/questions/:id", requireAuth, async (req, res) => {
@@ -189,12 +215,16 @@ router.post("/:quizId/attempt", requireAuth, async (req, res) => {
         .eq("id", quizId)
         .select()
         .single(),
-      supabase.from("completed_quizzes").insert({
-        quiz_id: quizId,
-        num_correct: numCorrect,
-        incorrect_indexes: incorrectIndexes,
-        seconds,
-      }),
+      supabase
+        .from("completed_quizzes")
+        .insert({
+          quiz_id: quizId,
+          num_correct: numCorrect,
+          incorrect_indexes: incorrectIndexes,
+          seconds,
+        })
+        .select()
+        .single(),
     ]);
 
     if (updateQuizRes.error) {
@@ -214,7 +244,9 @@ router.post("/:quizId/attempt", requireAuth, async (req, res) => {
         .json({ error: "Failed to record completed quiz attempt" });
     }
 
-    return res.status(200).json(updateQuizRes.data);
+    return res
+      .status(200)
+      .json({ quiz: updateQuizRes.data, attempt: insertCompletedRes.data });
   } catch (e) {
     console.error("Unexpected error adding attempt:", e);
     return res.status(500).json({ error: "Error adding attempt" });
@@ -226,7 +258,6 @@ router.post(
   requireAuth,
   upload.array("images"),
   async (req, res) => {
-    // Let the client know this will be a streaming JSON response
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Transfer-Encoding", "chunked");
 
@@ -254,10 +285,21 @@ router.post(
       send({ stage: "ocr_started" });
 
       const ocrPieces: string[] = [];
+
       for (const file of files) {
-        const ocrText = await extractTextFromImageBuffer(file);
-        if (ocrText) ocrPieces.push(ocrText);
+        try {
+          const ocrText = await extractTextFromImageFile(file);
+          if (ocrText) ocrPieces.push(ocrText);
+        } finally {
+          // Clean up temp file no matter what
+          if (file.path) {
+            fsPromises.unlink(file.path).catch(() => {
+              // ignore unlink errors
+            });
+          }
+        }
       }
+
       const ocrTextCombined = ocrPieces.join("\n\n");
 
       // 20k char budget: typed notes first, then OCR
@@ -288,11 +330,6 @@ router.post(
         genExample: genExample === "true" || genExample === true,
       });
 
-      // const balancedQuiz = await balanceQuizAnswers(quizObj);
-
-      // send({ stage: "cleaning_quiz" });
-
-      // Insert quiz row
       const { data: quizData, error: quizError } = await supabase
         .from("quizzes")
         .insert([
@@ -315,7 +352,6 @@ router.post(
         return res.end();
       }
 
-      // Build question rows
       const questionRows: DbQuestionRow[] = quizObj.questions.map(
         (q: AiQuestion) => {
           const { options, correctIndex } = shuffleOptions(
@@ -338,7 +374,6 @@ router.post(
         }
       );
 
-      // Insert questions
       const { data: questionData, error: questionError } = await supabase
         .from("quiz_questions")
         .insert(questionRows)
@@ -354,7 +389,6 @@ router.post(
         return res.end();
       }
 
-      // Final success payload
       send({
         stage: "quiz_done",
         quiz: quizData,
