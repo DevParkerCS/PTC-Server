@@ -29,6 +29,12 @@ router.get("/questions/:id", requireAuth, async (req, res) => {
       supabase.from("quiz_questions").select().eq("quiz_id", quizId),
     ]);
 
+    if (quizInfoRes.error) {
+      return res.status(500).json({ error: "Error getting quiz info" });
+    } else if (questionsRes.error) {
+      return res.status(500).json({ error: "Error getting questions" });
+    }
+
     const quizInfo = quizInfoRes.data;
     const questions = questionsRes.data;
 
@@ -80,6 +86,32 @@ router.patch("/:quizId/title", requireAuth, async (req, res) => {
     res.json({ data });
   } catch (e) {
     res.status(500).json({ error: "Error updating title" });
+  }
+});
+
+router.get("/:quizId/attempts", requireAuth, async (req, res) => {
+  const { quizId } = req.params;
+  console.log(quizId);
+
+  if (!quizId) {
+    return res.status(400).json({ error: "Missing quizId" });
+  }
+
+  try {
+    const attemptsRes = await supabase
+      .from("completed_quizzes")
+      .select()
+      .eq("quiz_id", quizId)
+      .order("completed_at", { ascending: false });
+
+    if (attemptsRes.error) {
+      return res.status(500).json({ error: "Error fetching attempts" });
+    }
+
+    const attempts = attemptsRes.data;
+    return res.status(200).json(attempts);
+  } catch (e) {
+    res.status(500).json({ error: "Error fetching attempts" });
   }
 });
 
@@ -182,10 +214,7 @@ router.post("/:quizId/attempt", requireAuth, async (req, res) => {
         .json({ error: "Failed to record completed quiz attempt" });
     }
 
-    return res.status(200).json({
-      message: "Attempt recorded successfully",
-      quizStats: updateQuizRes.data,
-    });
+    return res.status(200).json(updateQuizRes.data);
   } catch (e) {
     console.error("Unexpected error adding attempt:", e);
     return res.status(500).json({ error: "Error adding attempt" });

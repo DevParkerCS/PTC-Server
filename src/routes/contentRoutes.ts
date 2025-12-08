@@ -25,7 +25,7 @@ router.get("/:id", requireAuth, async (req, res) => {
           id: row.id,
           type: "quiz",
           title: row.title,
-          num_items: `${row.num_questions} Questions`,
+          num_items: row.num_questions,
           last_used_at: lastUsed, // ISO string from Supabase
         };
       }) ?? [];
