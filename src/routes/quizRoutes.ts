@@ -3,7 +3,6 @@ import { supabase } from "../supabaseClient";
 import { extractTextFromImageFile } from "../OpenAI/OCRUtils";
 import {
   AiQuestion,
-  balanceQuizAnswers,
   DbQuestionRow,
   generateQuizFromNotes,
   shuffleOptions,
@@ -258,31 +257,41 @@ router.post(
   requireAuth,
   upload.array("images"),
   async (req, res) => {
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.setHeader("Transfer-Encoding", "chunked");
-
-    const send = (data: any) => {
-      res.write(JSON.stringify(data) + "\n");
-    };
+    const {
+      notesText = "",
+      gradeLevel = "",
+      numQuestions = "10",
+      classId = "",
+      newQuizId = "",
+      genExample = "false",
+    } = req.body;
 
     try {
-      const {
-        notesText = "",
-        gradeLevel = "",
-        numQuestions = "10",
-        classId = "",
-        genExample = "false",
-      } = req.body;
+      if (!classId || !newQuizId) {
+        return res.status(400).json({ error: "Missing classId" });
+      }
 
-      if (!classId) {
-        send({ stage: "error", error: "Missing Class ID" });
-        return res.end();
+      const { data: generatingData, error: generatingError } = await supabase
+        .from("quizzes")
+        .insert({
+          id: newQuizId,
+          class_id: classId,
+          title: "Generating...",
+          num_questions: numQuestions,
+          status: "generating",
+          difficulty: gradeLevel,
+        })
+        .select()
+        .single();
+
+      if (generatingError || !generatingData) {
+        if (generatingError?.code === "23505")
+          return res.status(500).json({ error: "Duplicate Attempts Detected" });
+
+        return res.status(500).json({ error: "Error inserting new quiz" });
       }
 
       const files = (req.files as Express.Multer.File[]) ?? [];
-
-      // ---- OCR STAGE ----
-      send({ stage: "ocr_started" });
 
       const ocrPieces: string[] = [];
 
@@ -311,18 +320,6 @@ router.post(
 
       const combinedNotes = [typed, ocrTrimmed].filter(Boolean).join("\n\n");
 
-      send({
-        stage: "ocr_done",
-        meta: {
-          typedLength: typed.length,
-          ocrLength: ocrTrimmed.length,
-          combinedLength: combinedNotes.length,
-        },
-      });
-
-      // ---- QUIZ GENERATION STAGE ----
-      send({ stage: "quiz_started" });
-
       const quizObj = await generateQuizFromNotes({
         notes: combinedNotes,
         gradeLevel,
@@ -332,24 +329,20 @@ router.post(
 
       const { data: quizData, error: quizError } = await supabase
         .from("quizzes")
-        .insert([
+        .update([
           {
             title: quizObj.quiz.title,
             class_id: classId,
             num_questions: quizObj.questions.length,
+            status: "ready",
           },
         ])
+        .eq("id", newQuizId)
         .select()
         .single();
 
       if (quizError || !quizData) {
-        console.error("Quiz insert error:", quizError);
-        send({
-          stage: "error",
-          error: "Failed to save quiz",
-          details: quizError,
-        });
-        return res.end();
+        return res.status(400).send("Missing Information");
       }
 
       const questionRows: DbQuestionRow[] = quizObj.questions.map(
@@ -381,25 +374,19 @@ router.post(
 
       if (questionError) {
         console.error("Question insert error:", questionError);
-        send({
-          stage: "error",
-          error: "Failed to save quiz questions",
-          details: questionError,
-        });
-        return res.end();
+        return res.status(500).json({ error: "Error inserting questions" });
       }
 
-      send({
-        stage: "quiz_done",
-        quiz: quizData,
-        questions: questionData,
-      });
-
-      res.end();
+      res.status(200);
     } catch (err) {
-      console.error("Error in POST /from-notes (combined):", err);
-      send({ stage: "error", error: "Failed to generate quiz" });
-      res.end();
+      try {
+        await supabase
+          .from("quizzes")
+          .update({ status: "error", title: "Error Generating" })
+          .eq("id", newQuizId);
+      } catch (e) {}
+
+      res.status(500).json({ error: "Error generating quiz" });
     }
   }
 );

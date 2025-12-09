@@ -14,13 +14,13 @@ router.get("/:id", requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("quizzes")
-      .select("id, title, num_questions, last_taken_at, created_at")
+      .select()
       .eq("class_id", classId)
-      .order("created_at");
+      .order("created_at", { ascending: false });
 
     const quizzes =
       data?.map((row) => {
-        const lastUsed = row.last_taken_at ?? row.created_at;
+        const lastUsed = row.last_taken_at;
 
         return {
           id: row.id,
@@ -28,6 +28,8 @@ router.get("/:id", requireAuth, async (req, res) => {
           title: row.title,
           num_items: row.num_questions,
           last_used_at: lastUsed,
+          status: row.status,
+          difficulty: row.difficulty,
         };
       }) ?? [];
 
