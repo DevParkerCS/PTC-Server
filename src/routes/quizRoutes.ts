@@ -311,8 +311,6 @@ router.post(
           .select()
           .single();
 
-        console.log(generatingError);
-
         if (generatingError) {
           return res.status(500).json({ error: "Error updating old quiz" });
         }
@@ -358,15 +356,13 @@ router.post(
         .select()
         .single();
 
-      console.log(quizData);
-
-      if (!quizData || quizData.status !== "generating") {
-        // quiz was cancelled or deleted while we were working
-        return res.status(409).json({ error: "Quiz was cancelled or deleted" });
+      if (quizError) {
+        console.error("quiz update error:", quizError);
+        return res.status(500).json({ error: "Error updating quiz" });
       }
 
-      if (quizError) {
-        return res.status(400).send("Missing Information");
+      if (!quizData) {
+        return res.status(409).json({ error: "Quiz was cancelled or deleted" });
       }
 
       const questionRows: DbQuestionRow[] = quizObj.questions.map(
