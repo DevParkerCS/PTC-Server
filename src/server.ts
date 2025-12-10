@@ -10,8 +10,12 @@ const app = express();
 
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000", // your React dev server
-    // credentials: true,
+    origin: [
+      "http://localhost:3000",
+      "http://10.20.8.48:3000", // your LAN dev origin
+      "https://passthatclass.com",
+      "https://www.passthatclass.com",
+    ],
   })
 );
 
