@@ -28,6 +28,7 @@ router.get("/:id", requireAuth, async (req, res) => {
           title: row.title,
           num_items: row.num_questions,
           last_used_at: lastUsed,
+          created_at: row.created_at,
           status: row.status,
           difficulty: row.difficulty,
         };

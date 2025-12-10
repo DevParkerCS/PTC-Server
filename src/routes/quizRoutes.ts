@@ -264,49 +264,65 @@ router.post(
       classId = "",
       newQuizId = "",
       genExample = "false",
+      existingQuiz = "false",
     } = req.body;
+
+    const files = (req.files as Express.Multer.File[]) ?? [];
+    const isNewQuiz: boolean = existingQuiz === "false";
 
     try {
       if (!classId || !newQuizId) {
         return res.status(400).json({ error: "Missing classId" });
       }
 
-      const { data: generatingData, error: generatingError } = await supabase
-        .from("quizzes")
-        .insert({
-          id: newQuizId,
-          class_id: classId,
-          title: "Generating...",
-          num_questions: numQuestions,
-          status: "generating",
-          difficulty: gradeLevel,
-        })
-        .select()
-        .single();
+      if (isNewQuiz) {
+        const { data: generatingData, error: generatingError } = await supabase
+          .from("quizzes")
+          .insert({
+            id: newQuizId,
+            class_id: classId,
+            title: "Generating...",
+            num_questions: numQuestions,
+            status: "generating",
+            difficulty: gradeLevel,
+          })
+          .select()
+          .single();
 
-      if (generatingError || !generatingData) {
-        if (generatingError?.code === "23505")
-          return res.status(500).json({ error: "Duplicate Attempts Detected" });
+        if (generatingError || !generatingData) {
+          if (generatingError?.code === "23505") {
+            return res
+              .status(500)
+              .json({ error: "Duplicate Attempts Detected" });
+          }
+          return res.status(500).json({ error: "Error inserting new quiz" });
+        }
+      } else {
+        const { data: generatingData, error: generatingError } = await supabase
+          .from("quizzes")
+          .update({
+            created_at: new Date().toISOString(),
+            title: "Generating...",
+            num_questions: numQuestions,
+            status: "generating",
+            difficulty: gradeLevel,
+          })
+          .eq("id", newQuizId)
+          .select()
+          .single();
 
-        return res.status(500).json({ error: "Error inserting new quiz" });
+        console.log(generatingError);
+
+        if (generatingError) {
+          return res.status(500).json({ error: "Error updating old quiz" });
+        }
       }
 
-      const files = (req.files as Express.Multer.File[]) ?? [];
-
+      // OCR loop – no need for per-file finally now
       const ocrPieces: string[] = [];
-
       for (const file of files) {
-        try {
-          const ocrText = await extractTextFromImageFile(file);
-          if (ocrText) ocrPieces.push(ocrText);
-        } finally {
-          // Clean up temp file no matter what
-          if (file.path) {
-            fsPromises.unlink(file.path).catch(() => {
-              // ignore unlink errors
-            });
-          }
-        }
+        const ocrText = await extractTextFromImageFile(file);
+        if (ocrText) ocrPieces.push(ocrText);
       }
 
       const ocrTextCombined = ocrPieces.join("\n\n");
@@ -338,10 +354,18 @@ router.post(
           },
         ])
         .eq("id", newQuizId)
+        .eq("status", "generating")
         .select()
         .single();
 
-      if (quizError || !quizData) {
+      console.log(quizData);
+
+      if (!quizData || quizData.status !== "generating") {
+        // quiz was cancelled or deleted while we were working
+        return res.status(409).json({ error: "Quiz was cancelled or deleted" });
+      }
+
+      if (quizError) {
         return res.status(400).send("Missing Information");
       }
 
@@ -379,16 +403,49 @@ router.post(
 
       res.status(200);
     } catch (err) {
+      // mark quiz as error if we got that far
       try {
-        await supabase
-          .from("quizzes")
-          .update({ status: "error", title: "Error Generating" })
-          .eq("id", newQuizId);
-      } catch (e) {}
+        if (newQuizId) {
+          await supabase
+            .from("quizzes")
+            .update({ status: "error", title: "Error Generating" })
+            .eq("id", newQuizId);
+        }
+      } catch {}
 
-      res.status(500).json({ error: "Error generating quiz" });
+      return res.status(500).json({ error: "Error generating quiz" });
+    } finally {
+      await Promise.all(
+        files.map((file) =>
+          file.path
+            ? fsPromises.unlink(file.path).catch(() => {
+                // ignore unlink errors
+              })
+            : Promise.resolve()
+        )
+      );
     }
   }
 );
+
+router.patch("/:quizId/setError", requireAuth, async (req, res) => {
+  const { quizId } = req.params;
+
+  if (!quizId) {
+    return res.status(400).json({ error: "Missing QuizID" });
+  }
+
+  try {
+    await supabase
+      .from("quizzes")
+      .update({ status: "error", title: "Error Generating" })
+      .eq("id", quizId)
+      .eq("status", "generating");
+
+    return res.status(200);
+  } catch (e) {
+    return res.status(500).json({ error: "Error Updating Quiz" });
+  }
+});
 
 export default router;
