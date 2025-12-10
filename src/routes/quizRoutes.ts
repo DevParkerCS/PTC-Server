@@ -298,7 +298,7 @@ router.post(
           return res.status(500).json({ error: "Error inserting new quiz" });
         }
       } else {
-        const { data: generatingData, error: generatingError } = await supabase
+        const { error: generatingError } = await supabase
           .from("quizzes")
           .update({
             created_at: new Date().toISOString(),
@@ -307,12 +307,23 @@ router.post(
             status: "generating",
             difficulty: gradeLevel,
           })
-          .eq("id", newQuizId)
-          .select()
-          .single();
+          .eq("id", newQuizId);
 
         if (generatingError) {
           return res.status(500).json({ error: "Error updating old quiz" });
+        }
+
+        // 🔥 clear out old questions for this quiz before inserting new ones
+        const { error: deleteError } = await supabase
+          .from("quiz_questions")
+          .delete()
+          .eq("quiz_id", newQuizId);
+
+        if (deleteError) {
+          console.error("Error deleting old questions:", deleteError);
+          return res
+            .status(500)
+            .json({ error: "Error resetting quiz questions" });
         }
       }
 
@@ -343,14 +354,12 @@ router.post(
 
       const { data: quizData, error: quizError } = await supabase
         .from("quizzes")
-        .update([
-          {
-            title: quizObj.quiz.title,
-            class_id: classId,
-            num_questions: quizObj.questions.length,
-            status: "ready",
-          },
-        ])
+        .update({
+          title: quizObj.quiz.title,
+          class_id: classId,
+          num_questions: quizObj.questions.length,
+          status: "ready",
+        })
         .eq("id", newQuizId)
         .eq("status", "generating")
         .select()
