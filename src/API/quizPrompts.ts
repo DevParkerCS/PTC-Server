@@ -13,6 +13,7 @@ Question rules:
 - Each question has exactly 1 correct answer and 3 plausible incorrect answers.
 - Incorrect answers must be clearly wrong but still related to the concept.
 - Every correct answer and explanation must be directly supported by, or logically derived from, the notes (no new rules).
+- Make sure to grab questions from different parts of the task and not the first n number of questions you find.
 
 Answer style:
 - Answers should be short exam-style phrases or single sentences.

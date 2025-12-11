@@ -4,7 +4,6 @@ import sharp from "sharp";
 import vision from "@google-cloud/vision";
 import fsPromises from "fs/promises";
 
-const MAX_OCR_CHARS = 20000;
 const MAX_OCR_LONG_EDGE = 1600;
 
 const credentials = process.env.GCP_VISION_API
@@ -15,17 +14,44 @@ const visionClient = new vision.ImageAnnotatorClient(
   credentials ? { credentials } : {}
 );
 
+type OcrResult = {
+  text: string;
+  pagesUsed: number; // how many "image slots" this call consumed
+};
+
 export async function extractTextFromImageFile(
-  file: Express.Multer.File
-): Promise<string> {
+  file: Express.Multer.File,
+  numImagesProcessed: number,
+  profile: any
+): Promise<OcrResult> {
   const start = performance.now();
   const filePath = file.path;
   const mime = file.mimetype;
 
   try {
-    // ---- PDF PATH (Vision, first 5 pages) ----
+    // ---- PDF PATH (Vision, each page = 1 "image") ----
     if (mime === "application/pdf") {
+      const imageLimit: number =
+        profile?.plan?.image_limit ?? Number.POSITIVE_INFINITY;
+
+      const remainingSlots = Math.max(0, imageLimit - numImagesProcessed);
+
+      // no remaining "image slots" → skip entirely
+      if (remainingSlots <= 0) {
+        console.log(
+          `Skipping PDF ${file.originalname}: image limit ${imageLimit} reached (processed ${numImagesProcessed}).`
+        );
+        return { text: "", pagesUsed: 0 };
+      }
+
       const pdfBytes = await fsPromises.readFile(filePath);
+
+      // Vision only allows up to 5 pages per call
+      const maxPagesThisCall = Math.min(remainingSlots, 5);
+
+      // Example: only ever ask for 1..10, but capped by both limits
+      const allPages = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+      const pagesToProcess = allPages.slice(0, maxPagesThisCall);
 
       const request = {
         requests: [
@@ -35,7 +61,7 @@ export async function extractTextFromImageFile(
               content: pdfBytes,
             },
             features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
-            pages: [1, 2, 3, 4, 5],
+            pages: pagesToProcess, // 👈 now ≤ 5
           },
         ],
       };
@@ -57,13 +83,19 @@ export async function extractTextFromImageFile(
       const text = fullText.trim();
       const end = performance.now();
       console.log(
-        `extractTextFromImageFile (Vision PDF) got ${text.length} chars in ${(
-          end - start
-        ).toFixed(0)} ms`
+        `extractTextFromImageFile (Vision PDF) got ${text.length} chars from ${
+          fileResponses.length
+        } pages in ${(end - start).toFixed(0)} ms`
       );
 
-      if (!text) return "";
-      return text.slice(0, MAX_OCR_CHARS);
+      if (!text) {
+        return { text: "", pagesUsed: fileResponses.length };
+      }
+
+      return {
+        text,
+        pagesUsed: fileResponses.length, // each page counts as one "image"
+      };
     }
 
     // ---- IMAGE PATH ----
@@ -90,8 +122,7 @@ export async function extractTextFromImageFile(
       )} ms`
     );
 
-    if (!text) return "";
-    return text.slice(0, MAX_OCR_CHARS);
+    return { text, pagesUsed: 1 };
   } catch (err) {
     const end = performance.now();
     console.error(

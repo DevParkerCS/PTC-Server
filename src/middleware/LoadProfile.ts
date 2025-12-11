@@ -26,7 +26,10 @@ export async function loadProfile(
           id,
           name,
           monthly_generation_limit,
-          price_cents
+          price_cents,
+          image_limit,
+          class_limit,
+          char_limit
         )
       `
     )

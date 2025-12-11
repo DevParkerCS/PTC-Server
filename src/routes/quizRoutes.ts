@@ -384,15 +384,25 @@ router.post(
 
       // 🧾 OCR loop
       const ocrPieces: string[] = [];
+      let numImagesProcessed = 0;
       for (const file of files) {
-        const ocrText = await extractTextFromImageFile(file);
-        if (ocrText) ocrPieces.push(ocrText);
+        const ocrRes = await extractTextFromImageFile(
+          file,
+          numImagesProcessed,
+          profile
+        );
+        if (ocrRes) {
+          ocrPieces.push(ocrRes.text);
+          numImagesProcessed += ocrRes.pagesUsed;
+        }
+        console.log(numImagesProcessed);
+        if (numImagesProcessed >= profile.plan.image_limit) break;
       }
 
       const ocrTextCombined = ocrPieces.join("\n\n");
 
       // 20k char budget: typed notes first, then OCR
-      const MAX_CHARS = 20000;
+      const MAX_CHARS = profile.plan.char_limit;
       const typed = notesText.slice(0, MAX_CHARS);
       const remaining = MAX_CHARS - typed.length;
       const ocrTrimmed =
@@ -400,7 +410,7 @@ router.post(
 
       const combinedNotes = [typed, ocrTrimmed].filter(Boolean).join("\n\n");
 
-      // 🤖 Call OpenAI quiz generator
+      // Call OpenAI quiz generator
       const quizObj = await generateQuizFromNotes({
         notes: combinedNotes,
         gradeLevel,
