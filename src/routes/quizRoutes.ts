@@ -117,7 +117,6 @@ router.patch("/:quizId/title", requireAuth, async (req, res) => {
 
 router.get("/:quizId/attempts", requireAuth, async (req, res) => {
   const { quizId } = req.params;
-  console.log(quizId);
 
   if (!quizId) {
     return res.status(400).json({ error: "Missing quizId" });
@@ -143,7 +142,7 @@ router.get("/:quizId/attempts", requireAuth, async (req, res) => {
 
 router.post("/:quizId/attempt", requireAuth, async (req, res) => {
   const { quizId } = req.params;
-  const { numCorrect, seconds, incorrectIndexes } = req.body;
+  const { numCorrect, seconds, incorrectIndexes, guessedIndexes } = req.body;
   const userId = (req as any).user?.id;
 
   // Basic validation - allow 0 but not undefined/null
@@ -221,6 +220,7 @@ router.post("/:quizId/attempt", requireAuth, async (req, res) => {
           quiz_id: quizId,
           num_correct: numCorrect,
           incorrect_indexes: incorrectIndexes,
+          guessed_indexes: guessedIndexes,
           seconds,
         })
         .select()
