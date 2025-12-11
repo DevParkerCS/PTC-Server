@@ -15,6 +15,7 @@ import { error } from "console";
 import path from "path";
 import fs from "fs";
 import fsPromises from "fs/promises";
+import { loadProfile } from "../middleware/LoadProfile";
 
 const uploadDir = path.join(__dirname, "..", "..", "uploads");
 
@@ -252,9 +253,17 @@ router.post("/:quizId/attempt", requireAuth, async (req, res) => {
   }
 });
 
+type UsageType = {
+  id: string;
+  generations_used: number;
+  period_start: string;
+  period_end: string;
+};
+
 router.post(
   "/from-notes",
   requireAuth,
+  loadProfile,
   upload.array("images"),
   async (req, res) => {
     const {
@@ -267,12 +276,58 @@ router.post(
       existingQuiz = "false",
     } = req.body;
 
+    const userId: string = (req as any).user?.id;
+    const profile = (req as any).profile;
     const files = (req.files as Express.Multer.File[]) ?? [];
     const isNewQuiz: boolean = existingQuiz === "false";
+    let reserved = false;
+
+    // 🔒 1) Reserve a generation up front using the DB function
+    const { error: reserveError } = await supabase.rpc("reserve_generation", {
+      p_user_id: userId,
+    });
+
+    if (reserveError) {
+      console.error("reserve_generation error:", reserveError);
+
+      const msg = reserveError.message || reserveError.details || "";
+
+      // Out of credits for current plan (free or pro)
+      if (msg.includes("NO_CREDITS")) {
+        return res.status(402).json({
+          code: "OUT_OF_CREDITS",
+          error: "You’ve used all your quiz generations for your current plan.",
+        });
+      }
+
+      // Profile/plan misconfiguration
+      if (msg.includes("PROFILE_NOT_FOUND") || msg.includes("PLAN_NOT_FOUND")) {
+        return res.status(500).json({
+          code: "PROFILE_OR_PLAN_ERROR",
+          error: "Your account is not fully set up. Please contact support.",
+        });
+      }
+
+      // No active period or other billing window issues
+      if (msg.includes("NO_ACTIVE_USAGE_PERIOD")) {
+        return res.status(402).json({
+          code: "NO_ACTIVE_PERIOD",
+          error: "No active usage period is configured for your subscription.",
+        });
+      }
+
+      // Unexpected error reserving generation
+      return res.status(500).json({
+        code: "RESERVE_FAILED",
+        error: "Could not reserve a quiz generation.",
+      });
+    }
+
+    reserved = true;
 
     try {
       if (!classId || !newQuizId) {
-        return res.status(400).json({ error: "Missing classId" });
+        return res.status(400).json({ error: "Missing classId or newQuizId" });
       }
 
       if (isNewQuiz) {
@@ -327,7 +382,7 @@ router.post(
         }
       }
 
-      // OCR loop – no need for per-file finally now
+      // 🧾 OCR loop
       const ocrPieces: string[] = [];
       for (const file of files) {
         const ocrText = await extractTextFromImageFile(file);
@@ -345,6 +400,7 @@ router.post(
 
       const combinedNotes = [typed, ocrTrimmed].filter(Boolean).join("\n\n");
 
+      // 🤖 Call OpenAI quiz generator
       const quizObj = await generateQuizFromNotes({
         notes: combinedNotes,
         gradeLevel,
@@ -352,6 +408,7 @@ router.post(
         genExample: genExample === "true" || genExample === true,
       });
 
+      // Update quiz with final title/num_questions/status
       const { data: quizData, error: quizError } = await supabase
         .from("quizzes")
         .update({
@@ -374,6 +431,7 @@ router.post(
         return res.status(409).json({ error: "Quiz was cancelled or deleted" });
       }
 
+      // Build question rows
       const questionRows: DbQuestionRow[] = quizObj.questions.map(
         (q: AiQuestion) => {
           const { options, correctIndex } = shuffleOptions(
@@ -406,8 +464,13 @@ router.post(
         return res.status(500).json({ error: "Error inserting questions" });
       }
 
-      res.status(200);
+      return res.status(200).json({
+        quiz: quizData,
+        questions: questionData,
+      });
     } catch (err) {
+      console.error("Error in /quiz/from-notes:", err);
+
       // mark quiz as error if we got that far
       try {
         if (newQuizId) {
@@ -416,8 +479,20 @@ router.post(
             .update({ status: "error", title: "Error Generating" })
             .eq("id", newQuizId);
         }
-      } catch {}
+      } catch {
+        // ignore secondary failure
+      }
 
+      if (reserved) {
+        try {
+          await supabase.rpc("refund_generation", { p_user_id: userId });
+        } catch (refundErr) {
+          console.error("refund_generation failed:", refundErr);
+          // even if refund fails, we still return the main error
+        }
+      }
+
+      // We do NOT refund the reserved generation here (Option B).
       return res.status(500).json({ error: "Error generating quiz" });
     } finally {
       await Promise.all(

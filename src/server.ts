@@ -4,6 +4,7 @@ import cors from "cors";
 import classesRoutes from "./routes/classesRoutes";
 import contentRoutes from "./routes/contentRoutes";
 import quizRoutes from "./routes/quizRoutes";
+import userRoutes from "./routes/userRoutes";
 
 dotenv.config();
 const app = express();
@@ -28,6 +29,7 @@ app.get("/health", (req, res) => {
 app.use("/classes", classesRoutes);
 app.use("/content", contentRoutes);
 app.use("/quiz", quizRoutes);
+app.use("/user", userRoutes);
 
 const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {
