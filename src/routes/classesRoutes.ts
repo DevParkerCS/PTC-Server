@@ -1,6 +1,7 @@
 import express from "express";
 import { supabase } from "../supabaseClient";
 import { requireAuth } from "../middleware/AuthMiddleware";
+import { loadProfile } from "../middleware/LoadProfile";
 
 const router = express.Router();
 
@@ -21,12 +22,29 @@ router.get("/", requireAuth, async (req, res) => {
   res.json(data);
 });
 
-router.post("/", requireAuth, async (req, res) => {
+router.post("/", requireAuth, loadProfile, async (req, res) => {
   const userId = (req as any).user?.id;
   const { name } = req.body;
+  const profile = (req as any).profile;
+
+  const { data: classData, error: classError } = await supabase
+    .from("classes")
+    .select()
+    .eq("user_id", userId);
+
+  if (!classData || classError) {
+    return res.status(500).json({ error: "Error loading previous classes" });
+  }
+
+  if (
+    profile.plan.class_limit &&
+    classData?.length >= profile.plan.class_limit
+  ) {
+    return res.status(400).json({ error: "Max Free Classes Reached" });
+  }
 
   if (!name || typeof name !== "string" || name.trim() === "") {
-    return res.status(400).json({});
+    return res.status(400).json({ error: "Missing Class Name" });
   }
 
   const { data, error } = await supabase
