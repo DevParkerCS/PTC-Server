@@ -45,7 +45,7 @@ router.get("/profile", requireAuth, loadProfile, async (req, res) => {
       );
     } else if (profile.plan) {
       generations_remaining_this_period =
-        profile.plan.monthly_generation_limit - profile.lifetime_generations;
+        profile.plan.monthly_generation_limit - profile.free_generations;
     }
 
     return res.status(200).json({
