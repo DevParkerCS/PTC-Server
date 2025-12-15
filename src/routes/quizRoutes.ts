@@ -280,7 +280,7 @@ router.post(
     const profile = (req as any).profile;
     const files = (req.files as Express.Multer.File[]) ?? [];
     const isNewQuiz: boolean = existingQuiz === "false";
-    numQuestions = Math.max(parseInt(numQuestions), 50);
+    numQuestions = Math.min(parseInt(numQuestions), 50);
     let reserved = false;
 
     // 🔒 1) Reserve a generation up front using the DB function

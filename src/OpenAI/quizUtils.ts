@@ -43,7 +43,7 @@ Additional constraints:
 - Match difficulty to a ${gradeLevel || "college"} student.
 ${
   genExample
-    ? "For this quiz, some questions should be concrete practice problems that directly use the concepts in the student's notes. Ask the student to solve, simplify, or interpret something."
+    ? "For this quiz, some questions should be concrete practice problems that directly use the concepts in the student's notes. Ask the student to solve, simplify, or interpret something.  Aim for at least half of the questions to be of this type"
     : ""
 }
         `.trim(),

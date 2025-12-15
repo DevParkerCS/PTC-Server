@@ -13,7 +13,8 @@ app.use(
   cors({
     origin: [
       "http://localhost:3000",
-      "http://10.20.8.48:3000", // your LAN dev origin
+      "http://10.20.8.48:3000",
+      "http://10.0.0.230:3000",
       "https://passthatclass.com",
       "https://www.passthatclass.com",
     ],
