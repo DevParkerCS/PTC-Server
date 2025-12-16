@@ -9,17 +9,20 @@ import userRoutes from "./routes/userRoutes";
 dotenv.config();
 const app = express();
 
-app.use(
-  cors({
-    origin: [
-      "http://localhost:3000",
-      "http://10.20.8.48:3000",
-      "http://10.0.0.230:3000",
-      "https://passthatclass.com",
-      "https://www.passthatclass.com",
-    ],
-  })
-);
+if (process.env.NODE_ENV !== "production") {
+  app.use(
+    cors({
+      origin: [
+        "http://localhost:3000",
+        "http://10.20.8.48:3000",
+        "http://10.0.0.230:3000",
+        "https://passthatclass.com",
+        "https://www.passthatclass.com",
+      ],
+      credentials: true,
+    })
+  );
+}
 
 app.use(express.json());
 
