@@ -175,27 +175,124 @@ Output schema (EXACT):
 }
 `.trim();
 
-// --- NEW: rebalance call ---
-const rebalanceQuiz = async (params: { quiz: QuizAIObject; notes: string }) => {
+const chunkArray = <T>(arr: T[], size: number): T[][] => {
+  if (size <= 0) throw new Error("chunk size must be > 0");
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size)
+    chunks.push(arr.slice(i, i + size));
+  return chunks;
+};
+
+const tryParseRebalancedQuiz = (text: string): QuizAIObject | null => {
+  try {
+    const cleaned = cleanJsonFromModel(text);
+    return JSON.parse(cleaned) as QuizAIObject;
+  } catch {
+    return null;
+  }
+};
+
+export const rebalanceQuiz = async (params: {
+  quiz: QuizAIObject;
+  notes: string;
+  batchSize?: number; // default 10
+}) => {
   const { quiz, notes } = params;
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
-    service_tier: "priority",
-    messages: [
-      { role: "system", content: rebalancePrompt },
-      {
-        role: "user",
-        content: `
-        <notes>${notes}</notes>
-        <quiz_json>${JSON.stringify(quiz)}</quiz_json>`,
-      },
-    ],
-  });
+  const total = quiz.questions.length;
+  if (total < 5 || total > 50) {
+    throw new Error(`Quiz must have 5–50 questions. Received ${total}.`);
+  }
 
-  const text = response.choices?.[0]?.message?.content || "";
-  const cleaned = cleanJsonFromModel(text);
-  console.log(cleaned);
+  // Recommended default: 10 (max 5 calls for 50 questions)
+  const batchSize = 10;
+  const batches = chunkArray(quiz.questions, batchSize);
 
-  return JSON.parse(cleaned) as QuizAIObject;
+  const rebalancedQuestions: QuizAIObject["questions"] = [];
+
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+    const originalBatchQuestions = batches[batchIndex];
+
+    const batchQuiz: QuizAIObject = {
+      quiz: { title: quiz.quiz.title },
+      questions: originalBatchQuestions,
+    };
+
+    try {
+      // --- First attempt ---
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1-mini",
+        service_tier: "priority",
+        messages: [
+          { role: "system", content: rebalancePrompt },
+          {
+            role: "user",
+            content: `
+<notes>${notes}</notes>
+<quiz_json>${JSON.stringify(batchQuiz)}</quiz_json>
+            `.trim(),
+          },
+        ],
+      });
+
+      const text = response.choices?.[0]?.message?.content || "";
+      let parsed = tryParseRebalancedQuiz(text);
+
+      // --- Retry if parse failed ---
+      if (!parsed) {
+        const retry = await openai.chat.completions.create({
+          model: "gpt-4.1-mini",
+          service_tier: "priority",
+          messages: [
+            { role: "system", content: rebalancePrompt },
+            {
+              role: "user",
+              content: `
+Your last output was not valid JSON. Output ONLY valid JSON in the exact schema.
+This is batch ${batchIndex + 1} of ${batches.length}.
+Only rebalance the questions inside <quiz_json>. Do not add/remove/reorder questions.
+
+<notes>${notes}</notes>
+<quiz_json>${JSON.stringify(batchQuiz)}</quiz_json>
+              `.trim(),
+            },
+          ],
+        });
+
+        const retryText = retry.choices?.[0]?.message?.content || "";
+        parsed = tryParseRebalancedQuiz(retryText);
+      }
+
+      // --- If still bad, fall back to original batch (no crash) ---
+      if (
+        !parsed ||
+        !parsed.questions ||
+        parsed.questions.length !== originalBatchQuestions.length
+      ) {
+        console.warn(
+          `[rebalanceQuiz] Batch ${batchIndex + 1}/${
+            batches.length
+          } failed (parse/schema). Falling back to original batch.`
+        );
+        rebalancedQuestions.push(...originalBatchQuestions);
+        continue;
+      }
+
+      rebalancedQuestions.push(...parsed.questions);
+    } catch (err) {
+      // Any API/network error: also fall back to original batch
+      console.warn(
+        `[rebalanceQuiz] Batch ${batchIndex + 1}/${
+          batches.length
+        } threw error. Falling back to original batch.`,
+        err
+      );
+      rebalancedQuestions.push(...originalBatchQuestions);
+    }
+  }
+
+  return {
+    quiz: { title: quiz.quiz.title },
+    questions: rebalancedQuestions,
+  } as QuizAIObject;
 };
