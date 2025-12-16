@@ -46,6 +46,8 @@ const router = express.Router();
 router.get("/questions/:id", requireAuth, async (req, res) => {
   const quizId = req.params.id;
 
+  console.log(quizId);
+
   if (!quizId) {
     return res.status(400).json({ error: "QuizId Is Missing" });
   }
@@ -56,6 +58,10 @@ router.get("/questions/:id", requireAuth, async (req, res) => {
     ]);
 
     if (quizInfoRes.error) {
+      if (quizInfoRes.error.code === "PGRST116") {
+        return res.status(404).json({ error: "Quiz Does Not Exist" });
+      }
+
       return res.status(500).json({ error: "Error getting quiz info" });
     } else if (questionsRes.error) {
       return res.status(500).json({ error: "Error getting questions" });

@@ -1,41 +1,47 @@
 export const quizPrompt = `
 You are generating a multiple-choice quiz for students.
 
-Core rule:
-- Use ONLY information that appears inside <notes>...</notes>.
-- You may invent small concrete details (names, numbers, scenarios) only if they are consistent with the rules and relationships in the notes.
-
-Question style:
-- Focus on the most important concepts and relationships.
-- Mix definition/understanding questions and applied/scenario questions.
-- Do NOT mention "the notes" or say "according to the notes" in any question.
+Core rules:
+- Use ONLY information inside <notes>...</notes>.
+- You may invent small concrete details (names/numbers/scenarios) ONLY if consistent with the notes.
+- Do NOT mention "the notes" or say "according to the notes".
 
 Question rules:
 - Each question has exactly 1 correct answer and 3 plausible incorrect answers.
-- Incorrect answers must be clearly wrong but still related to the concept.
-- Every correct answer and explanation must be directly supported by, or logically derived from, the notes (no new rules).
-- Pull questions from different parts of the notes (avoid clustering on the first section).
+- Incorrect answers must be clearly wrong but related.
+- Correct answer + explanation must be directly supported by, or logically derived from, the notes.
+- Pull questions from different parts of the notes (avoid clustering early).
 
-Answer option balance (VERY IMPORTANT):
+STRICT option-length procedure (MUST follow silently):
+1) Write the correct_answer FIRST.
+2) Count the correct_answer length in WORDS (split by spaces). Call this N.
+3) Write each incorrect answer so its word count is within N±1.
+4) Re-check all four options; if any option is outside N±1, rewrite it.
+5) The correct_answer MUST NOT be the longest option. If it is, rewrite ALL options until:
+   - correct_answer word count <= each incorrect answer word count (ties allowed),
+   - AND all options remain within N±1 (recompute N after rewriting correct_answer).
+
+Option form constraints (HARD):
 - Each option must be a short exam-style phrase or a single short sentence.
-- All four options MUST be roughly the same length:
-  - Target 6–12 words per option.
-  - The longest option may be at most 2 words longer than the shortest option.
-- Keep the *same grammatical form* across options (e.g., all noun phrases OR all short sentences).
-- Do NOT make the correct option uniquely specific:
-  - Don’t include extra qualifiers, examples, parentheses, dates, or numbers in only one option.
-  - If you use a number/name/detail in one option, use a comparable detail in the others.
-- Avoid giveaway patterns:
-  - No "All of the above", "None of the above", "Always", "Never" (unless directly supported by notes and used consistently).
-  - Avoid one option being the only long/complex/compound sentence.
+- Avoid list answers: max 1 comma per option (prefer 0). No long enumerations.
+- Keep the same grammatical “shape” across all options (all noun phrases OR all short sentences).
+- Do NOT make only the correct option uniquely specific:
+  - No extra qualifiers, examples, parentheses, dates, or numbers in only one option.
+  - If one option contains a number/name/detail, all options must contain a comparable one.
 
-Self-check before output:
-- For each question, silently verify option word counts and grammar consistency.
-- If any option violates the length rules or “stands out” by detail, rewrite options until they are balanced.
+No giveaway patterns:
+- No "All of the above", "None of the above".
+- Avoid "Always"/"Never" unless the notes explicitly justify it and similar certainty appears in other options.
 
 Explanation style:
-- Keep explanations short (1 sentence, <= 20 words).
-- Explanation must reference the underlying idea from the notes without quoting them.
+- Exactly 1 sentence, <= 18 words.
+- Supported by notes (no quoting).
+
+Final self-check (silent, REQUIRED):
+- Verify N±1 word rule for all options.
+- Verify correct_answer is NOT the longest option.
+- Verify grammar/shape consistency and no list-like options.
+- If any check fails, rewrite that entire question (stem + all options + explanation).
 
 Output format:
 Return ONLY valid JSON with exactly this structure (no extra keys, no Markdown):

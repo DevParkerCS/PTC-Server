@@ -31,7 +31,8 @@ export const generateQuizFromNotes = async ({
   console.log(genExample);
 
   const response = await openai.chat.completions.create({
-    model: "gpt-5-mini",
+    model: "gpt-4.1-mini",
+    service_tier: "priority",
     messages: [
       { role: "system", content: quizPrompt },
       {
@@ -57,16 +58,18 @@ ${
 
   const text = response.choices?.[0]?.message?.content || "";
 
-  const cleaned = text
-    .trim()
-    .replace(/^```json/i, "")
-    .replace(/^```/, "")
-    .replace(/```$/, "")
-    .trim();
-
-  const quizObj: QuizAIObject = JSON.parse(cleaned);
-
-  return quizObj;
+  const quizObj: QuizAIObject = JSON.parse(cleanJsonFromModel(text));
+  // return quizObj;
+  try {
+    const rebalanced = await rebalanceQuiz({
+      quiz: quizObj,
+      notes,
+    });
+    return rebalanced;
+  } catch (e) {
+    // If rebalance fails for any reason, fall back to original quiz.
+    return quizObj;
+  }
 };
 
 type ShuffledResult = {
@@ -98,4 +101,101 @@ export const shuffleOptions = (
 
   const correctIndex = tagged.findIndex((o) => o.isCorrect);
   return { options: tagged.map((o) => o.text), correctIndex };
+};
+
+// --- NEW: robust JSON cleaner ---
+const cleanJsonFromModel = (text: string) => {
+  return text
+    .trim()
+    .replace(/^```json/i, "")
+    .replace(/^```/, "")
+    .replace(/```$/, "")
+    .trim();
+};
+
+// --- UPDATED: rebalance prompt (NO NOTES) ---
+const rebalancePrompt = `
+You are a quiz rebalancer. Your ONLY job is to remove length-based answer giveaways (longest OR shortest) using ONLY the provided quiz JSON, while ensuring any rewritten incorrect answers do not contradict the notes.
+
+Rules:
+- Use <notes> ONLY as a constraint/check so rewritten incorrect answers remain consistent with the notes.
+- Treat the existing correct_answer as ground truth. Do NOT change its meaning.
+- Do NOT change the question text unless absolutely necessary (prefer rewriting incorrect answers only).
+- Return ONLY valid JSON in the exact schema below. No markdown. No extra keys.
+- Keep the same quiz title and the same number of questions.
+
+Task (do this for EACH question):
+1) Compute word counts for:
+   - correct_answer (Nc)
+   - each incorrect answer (Ni1, Ni2, Ni3)
+   - Let minI = min(Ni1,Ni2,Ni3), maxI = max(Ni1,Ni2,Ni3)
+
+2) If BOTH are true, make NO changes:
+   - Nc is NOT strictly greater than maxI (correct is not uniquely longest), AND
+   - Nc is NOT strictly less than minI (correct is not uniquely shortest), AND
+   - All incorrect answers are within Nc±1 words.
+
+3) Otherwise, rewrite incorrect_answers with MINIMAL changes until ALL are true:
+   A) Length neutrality (HARD):
+      - correct_answer must NOT be the unique longest option.
+      - correct_answer must NOT be the unique shortest option.
+      (Ties are allowed.)
+   B) Tight length band (HARD):
+      - Each incorrect answer must be within Nc±1 words.
+      - At least one incorrect answer must have word count >= Nc.
+      - At least one incorrect answer must have word count <= Nc.
+   C) Minimal-change procedure:
+      - If correct is uniquely shortest: rewrite ONLY the SINGLE longest incorrect answer to shorten it (or rewrite another to shorten),
+        keeping it plausible and within Nc±1.
+      - If correct is uniquely longest: rewrite ONLY the SINGLE shortest incorrect answer to lengthen it (or next shortest if needed),
+        keeping it plausible and within Nc±1.
+      - Re-check after each single-answer rewrite and stop as soon as all constraints pass.
+   D) Quality constraints:
+      - Incorrect answers remain clearly incorrect but still plausible.
+      - Rewritten incorrect answers must NOT introduce facts or rules that contradict <notes>.
+
+Notes (STRICT):
+- Do NOT add new rules/facts not supported by <notes>.
+- If the notes do not mention a specific value/detail, keep distractors generic rather than inventing specifics.
+- Keep incorrect answers the same general “shape” as the correct answer (phrase vs sentence).
+
+Do NOT change correct_answer text unless you cannot satisfy the rules otherwise.
+
+Output schema (EXACT):
+{
+  "quiz": { "title": "string" },
+  "questions": [
+    {
+      "question": "string",
+      "correct_answer": "string",
+      "incorrect_answers": ["string","string","string"],
+      "explanation": "string"
+    }
+  ]
+}
+`.trim();
+
+// --- NEW: rebalance call ---
+const rebalanceQuiz = async (params: { quiz: QuizAIObject; notes: string }) => {
+  const { quiz, notes } = params;
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4.1-mini",
+    service_tier: "priority",
+    messages: [
+      { role: "system", content: rebalancePrompt },
+      {
+        role: "user",
+        content: `
+        <notes>${notes}</notes>
+        <quiz_json>${JSON.stringify(quiz)}</quiz_json>`,
+      },
+    ],
+  });
+
+  const text = response.choices?.[0]?.message?.content || "";
+  const cleaned = cleanJsonFromModel(text);
+  console.log(cleaned);
+
+  return JSON.parse(cleaned) as QuizAIObject;
 };
