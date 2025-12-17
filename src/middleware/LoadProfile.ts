@@ -22,6 +22,7 @@ export async function loadProfile(
         free_generations,
         current_period_start,
         current_period_end,
+        stripe_customer_id,
         plan:plans (
           id,
           name,

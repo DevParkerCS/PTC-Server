@@ -5,6 +5,7 @@ import classesRoutes from "./routes/classesRoutes";
 import contentRoutes from "./routes/contentRoutes";
 import quizRoutes from "./routes/quizRoutes";
 import userRoutes from "./routes/userRoutes";
+import stripeRoutes from "./routes/stripeRoutes";
 
 dotenv.config();
 const app = express();
@@ -24,11 +25,13 @@ if (process.env.NODE_ENV !== "production") {
   );
 }
 
-app.use(express.json());
-
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
+
+app.use("/stripe", stripeRoutes);
+
+app.use(express.json());
 
 app.use("/classes", classesRoutes);
 app.use("/content", contentRoutes);
