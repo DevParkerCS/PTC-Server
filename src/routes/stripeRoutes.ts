@@ -29,7 +29,6 @@ router.post(
         const customer = await stripe.customers.create({
           email,
           metadata: { user_id: userId },
-          test_clock: "clock_1Sf9LMK7Wvn4CJucfPKPhVaf",
         });
         customerId = customer.id;
 
