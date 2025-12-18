@@ -72,7 +72,6 @@ router.post(
 router.post("/portal", requireAuth, loadProfile, async (req, res) => {
   const userId = (req as any).user.id;
   const profile = (req as any).profile;
-  console.log("HERE");
 
   if (!profile?.stripe_customer_id) {
     return res.status(400).json({ error: "No Stripe customer on file" });

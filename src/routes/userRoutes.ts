@@ -110,4 +110,13 @@ router.post("/contact", contactLimiter, async (req, res) => {
   }
 });
 
+router.delete("/account", requireAuth, async (req, res) => {
+  const userId = (req as any).user.id;
+
+  const { error } = await supabase.auth.admin.deleteUser(userId);
+  if (error) return res.status(500).json({ error: "FAILED_TO_DELETE" });
+
+  return res.status(204).send();
+});
+
 export default router;
