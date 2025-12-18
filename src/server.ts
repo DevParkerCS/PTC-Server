@@ -28,6 +28,7 @@ if (process.env.NODE_ENV !== "production") {
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
+app.set("trust proxy", 1);
 
 app.use("/stripe", stripeRoutes);
 

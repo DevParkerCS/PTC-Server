@@ -5,7 +5,14 @@ import { loadProfile } from "../middleware/LoadProfile";
 import Stripe from "stripe";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-
+const HANDLED_STRIPE_EVENTS = new Set<string>([
+  "invoice.paid",
+  "invoice.payment_failed",
+  "customer.subscription.updated",
+  "customer.subscription.deleted",
+  "customer.deleted",
+  "customer.subscription.created",
+]);
 const router = express.Router();
 
 router.post(
@@ -99,9 +106,111 @@ router.post(
       return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
+    if (!HANDLED_STRIPE_EVENTS.has(event.type)) {
+      return res.status(200).json({ received: "true" });
+    }
+
+    // --- Idempotency / de-dupe guard ---
+    const STALE_MS = 3 * 60 * 1000;
+    const nowIso = new Date().toISOString();
+
+    try {
+      // Get existing row (single or null)
+      const { data: existing, error: fetchErr } = await supabase
+        .from("stripe_events")
+        .select("event_id,status,processing_started_at")
+        .eq("event_id", event.id)
+        .maybeSingle();
+
+      if (fetchErr) {
+        console.error(fetchErr);
+        return res.status(500).json({ error: "Error getting stripe event" });
+      }
+
+      // No row yet -> try to "lock" it as processing
+      if (!existing) {
+        const { error: insErr } = await supabase.from("stripe_events").insert({
+          event_id: event.id,
+          status: "processing",
+          type: event.type,
+          processing_started_at: nowIso,
+        });
+
+        // If this fails due to unique conflict, another request beat us — re-fetch and handle below
+        if (insErr) {
+          // You can optionally check insErr.code for unique violation, but simplest is refetch:
+          const { data: again, error: againErr } = await supabase
+            .from("stripe_events")
+            .select("event_id,status,processing_started_at")
+            .eq("event_id", event.id)
+            .maybeSingle();
+
+          if (againErr) {
+            console.error(againErr);
+            return res
+              .status(500)
+              .json({ error: "Error re-checking stripe event" });
+          }
+
+          if (again?.status === "processed") {
+            return res.json({ received: true });
+          }
+
+          if (again?.status === "processing") {
+            const started = again.processing_started_at
+              ? Date.parse(again.processing_started_at)
+              : 0;
+
+            // Not stale -> ack so Stripe stops retrying
+            if (started && Date.now() - started < STALE_MS) {
+              return res.json({ received: true });
+            }
+
+            // Stale -> reclaim lock and continue processing
+            await supabase
+              .from("stripe_events")
+              .update({ processing_started_at: nowIso, status: "processing" })
+              .eq("event_id", event.id);
+          }
+        }
+      } else {
+        // Existing row found
+        if (existing.status === "processed") {
+          return res.json({ received: true });
+        }
+
+        if (existing.status === "processing") {
+          const started = existing.processing_started_at
+            ? Date.parse(existing.processing_started_at)
+            : 0;
+
+          // Not stale -> ACK (don’t 500 forever)
+          if (started && Date.now() - started < STALE_MS) {
+            return res.json({ received: true });
+          }
+
+          // Stale -> reclaim and continue processing
+          const { error: reclaimErr } = await supabase
+            .from("stripe_events")
+            .update({ processing_started_at: nowIso, status: "processing" })
+            .eq("event_id", event.id);
+
+          if (reclaimErr) {
+            console.error(reclaimErr);
+            return res
+              .status(500)
+              .json({ error: "Error reclaiming stale event" });
+          }
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: "Error handling event ID" });
+    }
+
     try {
       switch (event.type) {
-        case "invoice.payment_succeeded": {
+        case "invoice.paid": {
           const invoice = event.data.object as Stripe.Invoice;
 
           const customerId =
@@ -137,16 +246,21 @@ router.post(
           const { error } = await supabase
             .from("profiles")
             .update({
-              plan_id: "pro",
-              stripe_subscription_id: subscriptionId,
+              stripe_subscription_id: subscriptionId ?? undefined,
               current_period_start: startIso,
               current_period_end: endIso,
-              subscription_status: "active",
             })
             .eq("stripe_customer_id", customerId);
 
           if (error) {
-            console.error("Supabase update error:", error);
+            try {
+              await supabase
+                .from("stripe_events")
+                .update({ status: "failed" })
+                .eq("event_id", event.id);
+            } catch (e) {
+              return res.status(500).send("Error updating profile");
+            }
             return res.status(500).send("Error updating profile");
           }
 
@@ -164,18 +278,60 @@ router.post(
           const { error } = await supabase
             .from("profiles")
             .update({
-              plan_id: "free",
-              current_period_start: null,
-              current_period_end: null,
-              subscription_status: "none",
+              subscription_status: "past_due",
             })
             .eq("stripe_customer_id", customerId);
 
           if (error) {
+            await supabase
+              .from("stripe_events")
+              .update({ status: "failed" })
+              .eq("event_id", event.id);
+
             return res
               .status(500)
               .json({ error: "Error updating profile database" });
           }
+          break;
+        }
+
+        case "customer.subscription.created": {
+          const sub = event.data.object as Stripe.Subscription;
+
+          const stripeCustomerId =
+            typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
+
+          const stripeStatus = sub.status;
+          const cancelAt = !!sub.cancel_at;
+
+          // Treat these as "Pro has access" (adjust if you want different behavior)
+          const isPro =
+            stripeStatus === "active" || stripeStatus === "trialing";
+
+          const { error } = await supabase
+            .from("profiles")
+            .update({
+              stripe_customer_id: stripeCustomerId,
+              stripe_subscription_id: sub.id,
+              plan_id: isPro ? "pro" : "free",
+              subscription_status: cancelAt
+                ? "canceled"
+                : isPro
+                ? "active"
+                : "none",
+            })
+            .eq("stripe_customer_id", stripeCustomerId);
+
+          if (error) {
+            console.error("Supabase update error:", error);
+            await supabase
+              .from("stripe_events")
+              .update({ status: "failed" })
+              .eq("event_id", event.id);
+            return res.status(500).send("Error updating profile");
+          }
+
+          break;
         }
 
         case "customer.subscription.updated": {
@@ -183,9 +339,6 @@ router.post(
 
           const stripeCustomerId =
             typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
-
-          const stripeSubscriptionId = sub.id;
-          const stripePriceId = sub.items.data[0]?.price?.id ?? null;
 
           const item0 = sub.items?.data?.[0];
 
@@ -204,21 +357,25 @@ router.post(
           const cancelAt = !!sub.cancel_at;
 
           const isPro = stripeStatus === "active";
+          console.log(isPro);
+          console.log(stripeStatus);
 
           const { error } = await supabase
             .from("profiles")
             .update({
-              plan_id: isPro ? "pro" : "free",
               stripe_customer_id: stripeCustomerId,
-              stripe_subscription_id: stripeSubscriptionId,
-              current_period_start: startIso,
-              current_period_end: endIso,
+              stripe_subscription_id: sub.id,
+              plan_id: isPro ? "pro" : "free",
               subscription_status: cancelAt ? "canceled" : "active",
             })
             .eq("stripe_customer_id", stripeCustomerId);
 
           if (error) {
             console.error("Supabase update error:", error);
+            await supabase
+              .from("stripe_events")
+              .update({ status: "failed" })
+              .eq("event_id", event.id);
             return res.status(500).send("Error updating profile");
           }
 
@@ -231,13 +388,12 @@ router.post(
           const stripeCustomerId =
             typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
 
-          console.log(stripeCustomerId);
-
           const { error } = await supabase
             .from("profiles")
             .update({
               plan_id: "free",
               subscription_status: "none",
+              stripe_subscription_id: null,
               current_period_start: null,
               current_period_end: null,
             })
@@ -245,6 +401,10 @@ router.post(
 
           console.log(error);
           if (error) {
+            await supabase
+              .from("stripe_events")
+              .update({ status: "failed" })
+              .eq("event_id", event.id);
             console.error("Supabase update error:", error);
             return res.status(500).send("Error updating profile");
           }
@@ -271,18 +431,37 @@ router.post(
 
           if (error) {
             console.error("Supabase update error", error);
+            await supabase
+              .from("stripe_events")
+              .update({ status: "failed" })
+              .eq("event_id", event.id);
             return res.status(500).send("Error updating profile");
           }
+
+          break;
         }
 
         default: {
           break;
         }
       }
+      try {
+        await supabase
+          .from("stripe_events")
+          .update({ status: "processed" })
+          .eq("event_id", event.id);
+      } catch (e) {}
 
       return res.json({ received: true });
     } catch (err) {
       console.error("Webhook handler error:", err);
+      try {
+        await supabase
+          .from("stripe_events")
+          .update({ status: "failed" })
+          .eq("event_id", event.id);
+      } catch (e) {}
+
       return res.status(500).send("Webhook handler failed");
     }
   }
