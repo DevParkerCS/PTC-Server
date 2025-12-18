@@ -36,7 +36,6 @@ router.post(
         const customer = await stripe.customers.create({
           email,
           metadata: { user_id: userId },
-          test_clock: "clock_1SfasRK7Wvn4CJucyNmAmnaA",
         });
         customerId = customer.id;
 
@@ -370,9 +369,6 @@ router.post(
             stripeStatus === "trialing" ||
             stripeStatus === "past_due";
 
-          console.log(isProPlan);
-          console.log(stripeStatus);
-
           const { error } = await supabase
             .from("profiles")
             .update({
@@ -417,7 +413,6 @@ router.post(
             })
             .eq("stripe_customer_id", stripeCustomerId);
 
-          console.log(error);
           if (error) {
             await supabase
               .from("stripe_events")
@@ -433,7 +428,6 @@ router.post(
           const customer = event.data.object as Stripe.Customer;
 
           const customerId = customer.id;
-          console.log("deleting");
 
           const { error } = await supabase
             .from("profiles")
