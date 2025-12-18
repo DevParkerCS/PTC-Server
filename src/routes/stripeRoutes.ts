@@ -2,9 +2,9 @@ import express from "express";
 import { supabase } from "../supabaseClient";
 import { requireAuth } from "../middleware/AuthMiddleware";
 import { loadProfile } from "../middleware/LoadProfile";
+import { stripe } from "../Stripe/Stripe";
 import Stripe from "stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 const HANDLED_STRIPE_EVENTS = new Set<string>([
   "invoice.paid",
   "invoice.payment_failed",
@@ -195,7 +195,6 @@ router.post(
             .eq("event_id", event.id);
 
           if (reclaimErr) {
-            console.error(reclaimErr);
             return res
               .status(500)
               .json({ error: "Error reclaiming stale event" });
@@ -242,26 +241,27 @@ router.post(
             ? new Date(linePeriodEnd * 1000).toISOString()
             : null;
 
-          const { error } = await supabase
+          const { data, error } = await supabase
             .from("profiles")
             .update({
               stripe_subscription_id: subscriptionId ?? undefined,
               current_period_start: startIso,
               current_period_end: endIso,
             })
-            .eq("stripe_customer_id", customerId);
+            .eq("stripe_customer_id", customerId)
+            .select("user_id");
 
           if (error) {
-            try {
-              await supabase
-                .from("stripe_events")
-                .update({ status: "failed" })
-                .eq("event_id", event.id);
-            } catch (e) {
-              return res.status(500).send("Error updating profile");
-            }
+            await supabase
+              .from("stripe_events")
+              .update({ status: "failed" })
+              .eq("event_id", event.id);
+
             return res.status(500).send("Error updating profile");
           }
+
+          // profile gone (account deleted) -> no-op, but still succeed
+          if (!data || data.length === 0) break;
 
           break;
         }
@@ -279,24 +279,28 @@ router.post(
 
           if (!customerId || !subscriptionId) break;
 
-          const { error } = await supabase
+          const { data, error } = await supabase
             .from("profiles")
             .update({
               subscription_status: "past_due",
             })
             .eq("stripe_customer_id", customerId)
-            .eq("stripe_subscription_id", subscriptionId) // ✅ only mutate the active sub
-            .neq("subscription_status", "none"); // ✅ don't resurrect ended users
+            .eq("stripe_subscription_id", subscriptionId)
+            .neq("subscription_status", "none")
+            .select("user_id");
 
           if (error) {
             await supabase
               .from("stripe_events")
               .update({ status: "failed" })
               .eq("event_id", event.id);
+
             return res
               .status(500)
               .json({ error: "Error updating profile database" });
           }
+
+          if (!data || data.length === 0) break;
 
           break;
         }
@@ -310,13 +314,12 @@ router.post(
           const stripeStatus = sub.status;
           const cancelAt = !!sub.cancel_at;
 
-          // Treat these as "Pro has access" (adjust if you want different behavior)
           const isPro =
             stripeStatus === "active" ||
             stripeStatus === "trialing" ||
             stripeStatus === "past_due";
 
-          const { error } = await supabase
+          const { data, error } = await supabase
             .from("profiles")
             .update({
               stripe_customer_id: stripeCustomerId,
@@ -328,16 +331,19 @@ router.post(
                 ? "active"
                 : "none",
             })
-            .eq("stripe_customer_id", stripeCustomerId);
+            .eq("stripe_customer_id", stripeCustomerId)
+            .select("user_id");
 
           if (error) {
-            console.error("Supabase update error:", error);
             await supabase
               .from("stripe_events")
               .update({ status: "failed" })
               .eq("event_id", event.id);
+
             return res.status(500).send("Error updating profile");
           }
+
+          if (!data || data.length === 0) break;
 
           break;
         }
@@ -369,7 +375,7 @@ router.post(
             stripeStatus === "trialing" ||
             stripeStatus === "past_due";
 
-          const { error } = await supabase
+          const { data, error } = await supabase
             .from("profiles")
             .update({
               stripe_customer_id: stripeCustomerId,
@@ -381,17 +387,23 @@ router.post(
                   : cancelAt
                   ? "canceled"
                   : "active",
+              // (optional) if you still store periods here, keep these:
+              current_period_start: startIso ?? undefined,
+              current_period_end: endIso ?? undefined,
             })
-            .eq("stripe_customer_id", stripeCustomerId);
+            .eq("stripe_customer_id", stripeCustomerId)
+            .select("user_id");
 
           if (error) {
-            console.error("Supabase update error:", error);
             await supabase
               .from("stripe_events")
               .update({ status: "failed" })
               .eq("event_id", event.id);
+
             return res.status(500).send("Error updating profile");
           }
+
+          if (!data || data.length === 0) break;
 
           break;
         }
@@ -402,7 +414,7 @@ router.post(
           const stripeCustomerId =
             typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
 
-          const { error } = await supabase
+          const { data, error } = await supabase
             .from("profiles")
             .update({
               plan_id: "free",
@@ -411,25 +423,28 @@ router.post(
               current_period_start: null,
               current_period_end: null,
             })
-            .eq("stripe_customer_id", stripeCustomerId);
+            .eq("stripe_customer_id", stripeCustomerId)
+            .select("user_id");
 
           if (error) {
             await supabase
               .from("stripe_events")
               .update({ status: "failed" })
               .eq("event_id", event.id);
-            console.error("Supabase update error:", error);
+
             return res.status(500).send("Error updating profile");
           }
+
+          if (!data || data.length === 0) break;
+
           break;
         }
 
         case "customer.deleted": {
           const customer = event.data.object as Stripe.Customer;
-
           const customerId = customer.id;
 
-          const { error } = await supabase
+          const { data, error } = await supabase
             .from("profiles")
             .update({
               plan_id: "free",
@@ -439,16 +454,19 @@ router.post(
               stripe_customer_id: null,
               stripe_subscription_id: null,
             })
-            .eq("stripe_customer_id", customerId);
+            .eq("stripe_customer_id", customerId)
+            .select("user_id");
 
           if (error) {
-            console.error("Supabase update error", error);
             await supabase
               .from("stripe_events")
               .update({ status: "failed" })
               .eq("event_id", event.id);
+
             return res.status(500).send("Error updating profile");
           }
+
+          if (!data || data.length === 0) break;
 
           break;
         }

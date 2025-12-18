@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/AuthMiddleware";
 import { loadProfile } from "../middleware/LoadProfile";
 import rateLimit from "express-rate-limit";
 import { Resend } from "resend";
+import { stripe } from "../Stripe/Stripe";
 
 export const contactLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
@@ -26,27 +27,30 @@ router.get("/profile", requireAuth, loadProfile, async (req, res) => {
 
   try {
     let generations_used_this_period = 0;
-    let generations_remaining_this_period = null;
+    let generations_remaining_this_period: number | null = null;
 
-    // 2) If not on free plan, fetch this period's usage
+    // Paid plans: use the exact period stored on the profile (Stripe-authoritative)
     if (profile.plan_id !== "free" && profile.plan) {
-      const nowIso = new Date().toISOString();
+      const periodStart = profile.current_period_start ?? null;
+      const periodEnd = profile.current_period_end ?? null;
 
-      const { data: usage, error: usageError } = await supabase
-        .from("usage_limits")
-        .select("generations_used, period_start, period_end")
-        .eq("user_id", userId)
-        .lte("period_start", nowIso)
-        .gte("period_end", nowIso)
-        .maybeSingle();
+      if (periodStart && periodEnd) {
+        const { data: usage, error: usageError } = await supabase
+          .from("usage_limits")
+          .select("generations_used, period_start, period_end")
+          .eq("user_id", userId)
+          .eq("period_start", periodStart)
+          .eq("period_end", periodEnd)
+          .maybeSingle();
 
-      if (usageError) {
-        console.log("usage error", usageError);
-        // you can choose to still return profile without usage
-      }
+        if (usageError) {
+          console.log("usage error", usageError);
+          // still return profile without usage
+        }
 
-      if (usage) {
-        generations_used_this_period = usage.generations_used;
+        if (usage) {
+          generations_used_this_period = usage.generations_used ?? 0;
+        }
       }
 
       const limit = profile.plan.monthly_generation_limit ?? 0;
@@ -55,8 +59,10 @@ router.get("/profile", requireAuth, loadProfile, async (req, res) => {
         limit - generations_used_this_period
       );
     } else if (profile.plan) {
+      // Free plan (your existing logic)
       generations_remaining_this_period =
-        profile.plan.monthly_generation_limit - profile.free_generations;
+        (profile.plan.monthly_generation_limit ?? 0) -
+        (profile.free_generations ?? 0);
     }
 
     return res.status(200).json({
@@ -110,13 +116,43 @@ router.post("/contact", contactLimiter, async (req, res) => {
   }
 });
 
-router.delete("/account", requireAuth, async (req, res) => {
+router.delete("/account", requireAuth, loadProfile, async (req, res) => {
   const userId = (req as any).user.id;
+  const profile = (req as any).profile;
 
-  const { error } = await supabase.auth.admin.deleteUser(userId);
-  if (error) return res.status(500).json({ error: "FAILED_TO_DELETE" });
+  const stripeCustomerId = profile.stripe_customer_id;
+  const stripeSubId = profile.stripe_subscription_id;
 
-  return res.status(204).send();
+  try {
+    // 1) Cancel subscription (stop billing)
+    if (stripeSubId) {
+      await stripe.subscriptions.cancel(stripeSubId); // immediate cancel
+    }
+
+    // 2) Detach all saved card payment methods
+    if (stripeCustomerId) {
+      const pms = await stripe.paymentMethods.list({
+        customer: stripeCustomerId,
+        type: "card",
+      });
+
+      await Promise.all(
+        pms.data.map((pm) => stripe.paymentMethods.detach(pm.id))
+      );
+
+      // 3) Clear default
+      await stripe.customers.update(stripeCustomerId, {
+        invoice_settings: { default_payment_method: undefined },
+      });
+    }
+
+    const { error } = await supabase.auth.admin.deleteUser(userId);
+    if (error) return res.status(500).json({ error: "FAILED_TO_DELETE" });
+
+    return res.status(204).send();
+  } catch (e) {
+    return res.status(500).json({ error: "FAILED_TO_DELETE" });
+  }
 });
 
 export default router;

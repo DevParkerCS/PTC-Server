@@ -9,9 +9,7 @@ import {
 } from "../OpenAI/quizUtils";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
-import { json } from "stream/consumers";
 import { requireAuth } from "../middleware/AuthMiddleware";
-import { error } from "console";
 import path from "path";
 import fs from "fs";
 import fsPromises from "fs/promises";
