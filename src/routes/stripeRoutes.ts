@@ -36,6 +36,7 @@ router.post(
         const customer = await stripe.customers.create({
           email,
           metadata: { user_id: userId },
+          test_clock: "clock_1SfasRK7Wvn4CJucyNmAmnaA",
         });
         customerId = customer.id;
 
@@ -274,23 +275,30 @@ router.post(
               ? invoice.customer
               : invoice.customer?.id;
 
+          const subscriptionId =
+            invoice.parent?.subscription_details?.subscription ?? null;
+
+          if (!customerId || !subscriptionId) break;
+
           const { error } = await supabase
             .from("profiles")
             .update({
               subscription_status: "past_due",
             })
-            .eq("stripe_customer_id", customerId);
+            .eq("stripe_customer_id", customerId)
+            .eq("stripe_subscription_id", subscriptionId) // ✅ only mutate the active sub
+            .neq("subscription_status", "none"); // ✅ don't resurrect ended users
 
           if (error) {
             await supabase
               .from("stripe_events")
               .update({ status: "failed" })
               .eq("event_id", event.id);
-
             return res
               .status(500)
               .json({ error: "Error updating profile database" });
           }
+
           break;
         }
 
@@ -305,7 +313,9 @@ router.post(
 
           // Treat these as "Pro has access" (adjust if you want different behavior)
           const isPro =
-            stripeStatus === "active" || stripeStatus === "trialing";
+            stripeStatus === "active" ||
+            stripeStatus === "trialing" ||
+            stripeStatus === "past_due";
 
           const { error } = await supabase
             .from("profiles")
@@ -355,8 +365,12 @@ router.post(
           const stripeStatus = sub.status;
           const cancelAt = !!sub.cancel_at;
 
-          const isPro = stripeStatus === "active";
-          console.log(isPro);
+          const isProPlan =
+            stripeStatus === "active" ||
+            stripeStatus === "trialing" ||
+            stripeStatus === "past_due";
+
+          console.log(isProPlan);
           console.log(stripeStatus);
 
           const { error } = await supabase
@@ -364,8 +378,13 @@ router.post(
             .update({
               stripe_customer_id: stripeCustomerId,
               stripe_subscription_id: sub.id,
-              plan_id: isPro ? "pro" : "free",
-              subscription_status: cancelAt ? "canceled" : "active",
+              plan_id: isProPlan ? "pro" : "free",
+              subscription_status:
+                stripeStatus === "past_due"
+                  ? "past_due"
+                  : cancelAt
+                  ? "canceled"
+                  : "active",
             })
             .eq("stripe_customer_id", stripeCustomerId);
 
