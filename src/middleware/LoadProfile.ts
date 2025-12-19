@@ -1,12 +1,15 @@
 import type { Request, Response, NextFunction } from "express";
-import { supabase } from "../supabaseClient";
+import { supabaseAsUser } from "../supabaseClient";
 
 export async function loadProfile(
   req: Request,
   res: Response,
   next: NextFunction
 ) {
-  const userId = (req as any).user?.id as string | undefined;
+  const userId = (req as any).user?.id;
+  const token = (req as any).accessToken;
+
+  const supabase = supabaseAsUser(token);
 
   if (!userId) {
     return res.status(400).json({ error: "Missing UserID" });

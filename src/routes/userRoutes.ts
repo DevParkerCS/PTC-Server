@@ -1,5 +1,5 @@
 import express from "express";
-import { supabase } from "../supabaseClient";
+import { supabaseAdmin, supabaseAsUser } from "../supabaseClient";
 import { requireAuth } from "../middleware/AuthMiddleware";
 import { loadProfile } from "../middleware/LoadProfile";
 import rateLimit from "express-rate-limit";
@@ -20,10 +20,13 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 router.get("/profile", requireAuth, loadProfile, async (req, res) => {
   const userId: string = (req as any).user?.id;
   const profile = (req as any).profile;
+  const token = (req as any).accessToken;
 
   if (!userId) {
     return res.status(400).json({ error: "Missing UserID" });
   }
+
+  const supabase = supabaseAsUser(token);
 
   try {
     let generations_used_this_period = 0;
@@ -146,7 +149,7 @@ router.delete("/account", requireAuth, loadProfile, async (req, res) => {
       });
     }
 
-    const { error } = await supabase.auth.admin.deleteUser(userId);
+    const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
     if (error) return res.status(500).json({ error: "FAILED_TO_DELETE" });
 
     return res.status(204).send();

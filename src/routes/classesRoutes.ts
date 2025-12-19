@@ -1,5 +1,5 @@
 import express from "express";
-import { supabase } from "../supabaseClient";
+import { supabaseAsUser } from "../supabaseClient";
 import { requireAuth } from "../middleware/AuthMiddleware";
 import { loadProfile } from "../middleware/LoadProfile";
 
@@ -7,6 +7,9 @@ const router = express.Router();
 
 router.get("/", requireAuth, async (req, res) => {
   const userId = (req as any).user.id;
+  const token = (req as any).accessToken;
+
+  const supabase = supabaseAsUser(token);
 
   const { data, error } = await supabase
     .from("classes")
@@ -24,8 +27,11 @@ router.get("/", requireAuth, async (req, res) => {
 
 router.post("/", requireAuth, loadProfile, async (req, res) => {
   const userId = (req as any).user?.id;
+  const token = (req as any).accessToken;
   const { name } = req.body;
   const profile = (req as any).profile;
+
+  const supabase = supabaseAsUser(token);
 
   const { data: classData, error: classError } = await supabase
     .from("classes")
@@ -67,12 +73,16 @@ router.post("/", requireAuth, loadProfile, async (req, res) => {
 });
 
 router.patch("/:classId/edit", requireAuth, async (req, res) => {
+  const userId = (req as any).user?.id;
   const { classId } = req.params;
   const { newTitle } = req.body;
+  const token = (req as any).accessToken;
 
   if (!classId) {
     return res.status(400).json({ error: "Missing ClassID" });
   }
+
+  const supabase = supabaseAsUser(token);
 
   try {
     const { data, error } = await supabase
@@ -96,11 +106,15 @@ router.patch("/:classId/edit", requireAuth, async (req, res) => {
 });
 
 router.delete("/:classId", requireAuth, async (req, res) => {
+  const userId = (req as any).user?.id;
   const { classId } = req.params;
+  const token = (req as any).accessToken;
 
   if (!classId) {
     return res.status(400).json({ error: "ClassID is Missing" });
   }
+
+  const supabase = supabaseAsUser(token);
 
   try {
     const { data, error } = await supabase

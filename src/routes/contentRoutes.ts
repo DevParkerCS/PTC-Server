@@ -1,15 +1,19 @@
 import express from "express";
-import { supabase } from "../supabaseClient";
+import { supabaseAsUser } from "../supabaseClient";
 import { requireAuth } from "../middleware/AuthMiddleware";
 
 const router = express.Router();
 
 router.get("/:id", requireAuth, async (req, res) => {
   const classId = req.params.id;
+  const userId = (req as any).user?.id;
+  const token = (req as any).accessToken;
 
   if (!classId) {
     return res.status(400).json({ error: "ClassId Is Missing" });
   }
+
+  const supabase = supabaseAsUser(token);
 
   try {
     const { data, error } = await supabase
@@ -17,6 +21,11 @@ router.get("/:id", requireAuth, async (req, res) => {
       .select()
       .eq("class_id", classId)
       .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("fetch quizzes error:", error);
+      return res.status(500).json({ error: error.message });
+    }
 
     const quizzes =
       data?.map((row) => {

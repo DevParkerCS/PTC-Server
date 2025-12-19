@@ -1,5 +1,5 @@
 import express from "express";
-import { supabase } from "../supabaseClient";
+import { supabaseAdmin, supabaseAsUser } from "../supabaseClient";
 import { requireAuth } from "../middleware/AuthMiddleware";
 import { loadProfile } from "../middleware/LoadProfile";
 import { stripe } from "../Stripe/Stripe";
@@ -24,12 +24,15 @@ router.post(
     const user = (req as any).user;
     const email: string = user.email;
     const userId: string = user.id;
+    const token = (req as any).accessToken;
 
     let customerId = profile.stripe_customer_id;
 
     if (profile.plan_id === "pro") {
       return res.status(409).json({ error: "Already Have Pro Plan" });
     }
+
+    const supabase = supabaseAsUser(token);
 
     try {
       if (!customerId) {
@@ -115,7 +118,7 @@ router.post(
 
     try {
       // Get existing row (single or null)
-      const { data: existing, error: fetchErr } = await supabase
+      const { data: existing, error: fetchErr } = await supabaseAdmin
         .from("stripe_events")
         .select("event_id,status,processing_started_at")
         .eq("event_id", event.id)
@@ -128,17 +131,19 @@ router.post(
 
       // No row yet -> try to "lock" it as processing
       if (!existing) {
-        const { error: insErr } = await supabase.from("stripe_events").insert({
-          event_id: event.id,
-          status: "processing",
-          type: event.type,
-          processing_started_at: nowIso,
-        });
+        const { error: insErr } = await supabaseAdmin
+          .from("stripe_events")
+          .insert({
+            event_id: event.id,
+            status: "processing",
+            type: event.type,
+            processing_started_at: nowIso,
+          });
 
         // If this fails due to unique conflict, another request beat us — re-fetch and handle below
         if (insErr) {
           // You can optionally check insErr.code for unique violation, but simplest is refetch:
-          const { data: again, error: againErr } = await supabase
+          const { data: again, error: againErr } = await supabaseAdmin
             .from("stripe_events")
             .select("event_id,status,processing_started_at")
             .eq("event_id", event.id)
@@ -166,7 +171,7 @@ router.post(
             }
 
             // Stale -> reclaim lock and continue processing
-            await supabase
+            await supabaseAdmin
               .from("stripe_events")
               .update({ processing_started_at: nowIso, status: "processing" })
               .eq("event_id", event.id);
@@ -189,7 +194,7 @@ router.post(
           }
 
           // Stale -> reclaim and continue processing
-          const { error: reclaimErr } = await supabase
+          const { error: reclaimErr } = await supabaseAdmin
             .from("stripe_events")
             .update({ processing_started_at: nowIso, status: "processing" })
             .eq("event_id", event.id);
@@ -241,7 +246,7 @@ router.post(
             ? new Date(linePeriodEnd * 1000).toISOString()
             : null;
 
-          const { data, error } = await supabase
+          const { data, error } = await supabaseAdmin
             .from("profiles")
             .update({
               stripe_subscription_id: subscriptionId ?? undefined,
@@ -252,7 +257,7 @@ router.post(
             .select("user_id");
 
           if (error) {
-            await supabase
+            await supabaseAdmin
               .from("stripe_events")
               .update({ status: "failed" })
               .eq("event_id", event.id);
@@ -279,7 +284,7 @@ router.post(
 
           if (!customerId || !subscriptionId) break;
 
-          const { data, error } = await supabase
+          const { data, error } = await supabaseAdmin
             .from("profiles")
             .update({
               subscription_status: "past_due",
@@ -290,7 +295,7 @@ router.post(
             .select("user_id");
 
           if (error) {
-            await supabase
+            await supabaseAdmin
               .from("stripe_events")
               .update({ status: "failed" })
               .eq("event_id", event.id);
@@ -319,7 +324,7 @@ router.post(
             stripeStatus === "trialing" ||
             stripeStatus === "past_due";
 
-          const { data, error } = await supabase
+          const { data, error } = await supabaseAdmin
             .from("profiles")
             .update({
               stripe_customer_id: stripeCustomerId,
@@ -335,7 +340,7 @@ router.post(
             .select("user_id");
 
           if (error) {
-            await supabase
+            await supabaseAdmin
               .from("stripe_events")
               .update({ status: "failed" })
               .eq("event_id", event.id);
@@ -375,7 +380,7 @@ router.post(
             stripeStatus === "trialing" ||
             stripeStatus === "past_due";
 
-          const { data, error } = await supabase
+          const { data, error } = await supabaseAdmin
             .from("profiles")
             .update({
               stripe_customer_id: stripeCustomerId,
@@ -395,7 +400,7 @@ router.post(
             .select("user_id");
 
           if (error) {
-            await supabase
+            await supabaseAdmin
               .from("stripe_events")
               .update({ status: "failed" })
               .eq("event_id", event.id);
@@ -414,7 +419,7 @@ router.post(
           const stripeCustomerId =
             typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
 
-          const { data, error } = await supabase
+          const { data, error } = await supabaseAdmin
             .from("profiles")
             .update({
               plan_id: "free",
@@ -427,7 +432,7 @@ router.post(
             .select("user_id");
 
           if (error) {
-            await supabase
+            await supabaseAdmin
               .from("stripe_events")
               .update({ status: "failed" })
               .eq("event_id", event.id);
@@ -444,7 +449,7 @@ router.post(
           const customer = event.data.object as Stripe.Customer;
           const customerId = customer.id;
 
-          const { data, error } = await supabase
+          const { data, error } = await supabaseAdmin
             .from("profiles")
             .update({
               plan_id: "free",
@@ -458,7 +463,7 @@ router.post(
             .select("user_id");
 
           if (error) {
-            await supabase
+            await supabaseAdmin
               .from("stripe_events")
               .update({ status: "failed" })
               .eq("event_id", event.id);
@@ -476,7 +481,7 @@ router.post(
         }
       }
       try {
-        await supabase
+        await supabaseAdmin
           .from("stripe_events")
           .update({ status: "processed" })
           .eq("event_id", event.id);
@@ -486,7 +491,7 @@ router.post(
     } catch (err) {
       console.error("Webhook handler error:", err);
       try {
-        await supabase
+        await supabaseAdmin
           .from("stripe_events")
           .update({ status: "failed" })
           .eq("event_id", event.id);

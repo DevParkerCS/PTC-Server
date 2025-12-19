@@ -1,5 +1,5 @@
 import express from "express";
-import { supabase } from "../supabaseClient";
+import { supabaseAsUser } from "../supabaseClient";
 import { extractTextFromImageFile } from "../OpenAI/OCRUtils";
 import {
   AiQuestion,
@@ -43,12 +43,15 @@ const router = express.Router();
 
 router.get("/questions/:id", requireAuth, async (req, res) => {
   const quizId = req.params.id;
-
-  console.log(quizId);
+  const userId = (req as any).user?.id;
+  const token = (req as any).accessToken;
 
   if (!quizId) {
     return res.status(400).json({ error: "QuizId Is Missing" });
   }
+
+  const supabase = supabaseAsUser(token);
+
   try {
     const [quizInfoRes, questionsRes] = await Promise.all([
       supabase.from("quizzes").select().eq("id", quizId).single(),
@@ -76,10 +79,14 @@ router.get("/questions/:id", requireAuth, async (req, res) => {
 
 router.delete("/:quizId", requireAuth, async (req, res) => {
   const { quizId } = req.params;
+  const userId = (req as any).user?.id;
+  const token = (req as any).accessToken;
 
   if (!quizId) {
     return res.status(400).json({ error: "QuizId is missing" });
   }
+
+  const supabase = supabaseAsUser(token);
 
   try {
     const { data, error } = await supabase
@@ -101,6 +108,10 @@ router.delete("/:quizId", requireAuth, async (req, res) => {
 router.patch("/:quizId/title", requireAuth, async (req, res) => {
   const { quizId } = req.params;
   const updates = req.body;
+  const userId = (req as any).user?.id;
+  const token = (req as any).accessToken;
+
+  const supabase = supabaseAsUser(token);
 
   try {
     const { data, error } = await supabase
@@ -121,10 +132,14 @@ router.patch("/:quizId/title", requireAuth, async (req, res) => {
 
 router.get("/:quizId/attempts", requireAuth, async (req, res) => {
   const { quizId } = req.params;
+  const userId = (req as any).user?.id;
+  const token = (req as any).accessToken;
 
   if (!quizId) {
     return res.status(400).json({ error: "Missing quizId" });
   }
+
+  const supabase = supabaseAsUser(token);
 
   try {
     const attemptsRes = await supabase
@@ -148,6 +163,7 @@ router.post("/:quizId/attempt", requireAuth, async (req, res) => {
   const { quizId } = req.params;
   const { numCorrect, seconds, incorrectIndexes, guessedIndexes } = req.body;
   const userId = (req as any).user?.id;
+  const token = (req as any).accessToken;
 
   // Basic validation - allow 0 but not undefined/null
   if (!quizId) {
@@ -163,6 +179,8 @@ router.post("/:quizId/attempt", requireAuth, async (req, res) => {
       .status(400)
       .json({ error: "incorrectIndexes must be an array of numbers" });
   }
+
+  const supabase = supabaseAsUser(token);
 
   try {
     // 1. Fetch current quiz stats
@@ -286,6 +304,9 @@ router.post(
     const isNewQuiz: boolean = existingQuiz === "false";
     numQuestions = Math.min(parseInt(numQuestions), 50);
     let reserved = false;
+    const token = (req as any).accessToken;
+
+    const supabase = supabaseAsUser(token);
 
     // 🔒 1) Reserve a generation up front using the DB function
     const { error: reserveError } = await supabase.rpc("reserve_generation", {
@@ -349,13 +370,15 @@ router.post(
           .select()
           .single();
 
+        console.log(generatingData);
+
         if (generatingError || !generatingData) {
-          if (generatingError?.code === "23505") {
-            return res
-              .status(500)
-              .json({ error: "Duplicate Attempts Detected" });
-          }
-          return res.status(500).json({ error: "Error inserting new quiz" });
+          console.error("quizzes insert error:", generatingError);
+          return res.status(500).json({
+            error: "Error inserting new quiz",
+            details: generatingError?.message,
+            code: generatingError?.code,
+          });
         }
       } else {
         const { error: generatingError } = await supabase
@@ -373,7 +396,7 @@ router.post(
           return res.status(500).json({ error: "Error updating old quiz" });
         }
 
-        // 🔥 clear out old questions for this quiz before inserting new ones
+        // clear out old questions for this quiz before inserting new ones
         const { error: deleteError } = await supabase
           .from("quiz_questions")
           .delete()
@@ -525,10 +548,14 @@ router.post(
 
 router.patch("/:quizId/setError", requireAuth, async (req, res) => {
   const { quizId } = req.params;
+  const userId = (req as any).user?.id;
+  const token = (req as any).accessToken;
 
   if (!quizId) {
     return res.status(400).json({ error: "Missing QuizID" });
   }
+
+  const supabase = supabaseAsUser(token);
 
   try {
     await supabase
