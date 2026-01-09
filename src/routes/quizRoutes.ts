@@ -77,6 +77,18 @@ router.get("/questions/:id", requireAuth, async (req, res) => {
   }
 });
 
+router.patch("/toggle_private", requireAuth, async (req, res) => {
+  const { id } = req.body;
+  const token = (req as any).accessToken;
+
+  const supabase = supabaseAsUser(token);
+
+  try {
+  } catch (e) {
+    res.status(500).json({ error: "Error toggling privacy" });
+  }
+});
+
 router.delete("/:quizId", requireAuth, async (req, res) => {
   const { quizId } = req.params;
   const userId = (req as any).user?.id;

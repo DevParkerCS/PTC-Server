@@ -8,7 +8,7 @@ const router = express.Router();
 router.get("/", requireAuth, async (req, res) => {
   const userId = (req as any).user.id;
   const token = (req as any).accessToken;
-
+  console.log(token);
   const supabase = supabaseAsUser(token);
 
   const { data, error } = await supabase
